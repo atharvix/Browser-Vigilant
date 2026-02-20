@@ -78,7 +78,7 @@ window.loadWasmFeatureExtractor = async () => {
         const wasmGlueUrl = chrome.runtime.getURL('wasm-build/wasm_feature.js');
         const wasmModule = await import(wasmGlueUrl);
         const wasmUrl = chrome.runtime.getURL('wasm-build/wasm_feature_bg.wasm');
-        await wasmModule.default(wasmUrl);
+        await wasmModule.default({ module_or_path: wasmUrl });
 
         window.wasmFeatureExtractor = {
             extract_features: (url) => {

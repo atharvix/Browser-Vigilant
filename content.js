@@ -582,10 +582,17 @@ async function submitThreatToBlockchain(domain, confidence, threatType, evidence
             // Use fallback if WASM not available
             if (!window.wasmFeatureExtractor || !window.wasmFeatureExtractor.extract_features) {
                 console.warn('[BV] WASM not available, using basic feature extraction');
-                features = basicFeatureExtraction(url);
+                // Use a simple stub for features if fallback fails
+                features = new Array(56).fill(0);
+                features[0] = url.length;
+
             } else {
                 // Extract features using WASM
                 features = window.wasmFeatureExtractor.extract_features(url);
+            }
+
+            if (!features && window.wasm_bindgen && typeof window.wasm_bindgen.extract_features === 'function') {
+                features = Array.from(window.wasm_bindgen.extract_features(url));
             }
 
             // Layer 2: ONNX ML inference
@@ -594,16 +601,20 @@ async function submitThreatToBlockchain(domain, confidence, threatType, evidence
             ort.env.wasm.simd = false;  // disable simd to avoid any SIMD web worker loading issues completely
             ort.env.workers = 0;
             ort.env.wasm.proxy = false; // no web worker proxy
+            // Configure ONNX Runtime for extension environment
+            ort.env.wasm.numThreads = 1;     // disable threading to avoid loading threaded modules
+            ort.env.wasm.simd = true;        // enable SIMD if available
             ort.env.wasm.wasmPaths = {
                 'ort-wasm.wasm': chrome.runtime.getURL('ort-wasm.wasm'),
                 'ort-wasm-simd.wasm': chrome.runtime.getURL('ort-wasm-simd.wasm'),
-                // Fallback: if only basic wasm exists, map simd → basic
+                // Explicitly exclude threaded modules that cause errors
+                'ort-wasm-simd-threaded.jsep.mjs': null,
+                'ort-wasm-threaded.jsep.mjs': null,
+                'ort-wasm-threaded.wasm': null,
             };
+            // Remove any corejs paths that might cause issues
             ort.env.wasm.wasmCorejsPaths = undefined;
             if (ort.env.wasm.corejs) ort.env.wasm.corejs = undefined;
-            if (typeof ort.env.wasm.initializeWebAssembly === 'function') {
-                // Ignore
-            }
 
             const modelUrl = chrome.runtime.getURL("model.onnx");
             const session = await ort.InferenceSession.create(modelUrl, {

@@ -28,16 +28,16 @@ class BlockchainThreatVault {
         try {
             // Load existing threat data
             await this.loadThreatData();
-            
+
             // Register as validator
             await this.registerAsValidator();
-            
+
             // Start synchronization
             this.startSync();
-            
+
             this.isInitialized = true;
             console.log('Blockchain Threat Vault initialized successfully');
-            
+
         } catch (error) {
             ;
             throw error;
@@ -48,21 +48,21 @@ class BlockchainThreatVault {
     async loadThreatData() {
         try {
             const data = await chrome.storage.local.get(['threatVault', 'merkleTree']);
-            
+
             if (data.threatVault) {
                 this.registry.importData(data.threatVault);
             }
-            
+
             if (data.merkleTree) {
                 await this.merkleTree.deserialize(data.merkleTree);
             }
-            
+
             // Rebuild local threat cache
             const verifiedThreats = this.registry.getThreatsByStatus('verified');
             for (const threat of verifiedThreats) {
                 this.localThreats.add(threat.domainHash);
             }
-            
+
         } catch (error) {
             ;
         }
@@ -75,7 +75,7 @@ class BlockchainThreatVault {
                 threatVault: this.registry.exportData(),
                 merkleTree: this.merkleTree.serialize()
             };
-            
+
             await chrome.storage.local.set(data);
         } catch (error) {
             ;
@@ -88,10 +88,10 @@ class BlockchainThreatVault {
             // Generate key pair (simplified for browser environment)
             const publicKey = await this.generatePublicKey();
             const stakeAmount = 100; // Minimum stake
-            
+
             await this.registry.registerValidator(this.consensus.nodeId, publicKey, stakeAmount);
             console.log('Validator registered successfully with stake: ' + stakeAmount);
-            
+
         } catch (error) {
             ;
         }
@@ -131,12 +131,12 @@ class BlockchainThreatVault {
             // 2. Download new threat hashes
             // 3. Verify and merge with local data
             // 4. Upload local contributions
-            
+
             ;
-            
+
             // For demo purposes, we'll just save current state
             await this.saveThreatData();
-            
+
         } catch (error) {
             ;
         }
@@ -150,21 +150,21 @@ class BlockchainThreatVault {
 
         try {
             const domainHash = await this.hashDomain(domain);
-            
+
             // Check local cache first (fastest)
             if (this.localThreats.has(domainHash)) {
                 return { isThreat: true, source: 'local_cache' };
             }
-            
+
             // Check Merkle tree
             const inMerkleTree = await this.merkleTree.contains(domainHash);
             if (inMerkleTree) {
                 this.localThreats.add(domainHash); // Add to cache
                 return { isThreat: true, source: 'merkle_tree' };
             }
-            
+
             return { isThreat: false, source: 'not_found' };
-            
+
         } catch (error) {
             ;
             return { isThreat: false, source: 'error', error: error.message };
@@ -179,7 +179,7 @@ class BlockchainThreatVault {
 
         try {
             const domainHash = await this.hashDomain(domain);
-            
+
             // Register threat in registry
             const threatRecord = await this.registry.registerThreat(
                 domainHash,
@@ -188,22 +188,22 @@ class BlockchainThreatVault {
                 threatType,
                 evidence
             );
-            
+
             // Add to Merkle tree
             await this.merkleTree.addLeaf(domainHash);
-            
+
             // Add to local cache
             this.localThreats.add(domainHash);
-            
+
             // Submit for network validation
             await this.consensus.submitThreat(domainHash, evidence, confidence);
-            
+
             // Save updated data
             await this.saveThreatData();
-            
+
             console.log('Threat submitted successfully: ' + domain);
             return threatRecord;
-            
+
         } catch (error) {
             ;
             throw error;
@@ -225,7 +225,7 @@ class BlockchainThreatVault {
                 confidence,
                 await this.signVerification(domainHash, isValid)
             );
-            
+
             // Update local cache based on consensus
             const threat = this.registry.getThreat(domainHash);
             if (threat && threat.status === 'verified') {
@@ -235,12 +235,12 @@ class BlockchainThreatVault {
                 this.localThreats.delete(domainHash);
                 await this.merkleTree.removeLeaf(domainHash);
             }
-            
+
             // Save updated data
             await this.saveThreatData();
-            
+
             return verification;
-            
+
         } catch (error) {
             ;
             throw error;
@@ -258,7 +258,7 @@ class BlockchainThreatVault {
         } catch (e) {
             // If URL parsing fails, use as-is
         }
-        
+
         return await this.merkleTree.sha256(hostname.toLowerCase());
     }
 
@@ -274,7 +274,7 @@ class BlockchainThreatVault {
         if (!this.isInitialized) {
             await this.initialize();
         }
-        
+
         return {
             ...this.registry.getStatistics(),
             merkleRoot: this.merkleTree.getRoot(),
@@ -289,7 +289,7 @@ class BlockchainThreatVault {
         if (!this.isInitialized) {
             await this.initialize();
         }
-        
+
         return this.registry.getRecentThreats(limit);
     }
 
@@ -298,7 +298,7 @@ class BlockchainThreatVault {
         if (!this.isInitialized) {
             await this.initialize();
         }
-        
+
         return this.registry.searchThreats(criteria);
     }
 
@@ -307,7 +307,7 @@ class BlockchainThreatVault {
         if (!this.isInitialized) {
             await this.initialize();
         }
-        
+
         const domainHash = await this.hashDomain(domain);
         return await this.merkleTree.getCompactProof(domainHash);
     }
@@ -317,7 +317,7 @@ class BlockchainThreatVault {
         if (!this.isInitialized) {
             await this.initialize();
         }
-        
+
         return await this.merkleTree.verifyCompactProof(proof);
     }
 
@@ -326,7 +326,7 @@ class BlockchainThreatVault {
         if (!this.isInitialized) {
             await this.initialize();
         }
-        
+
         return {
             registry: this.registry.exportData(),
             merkleTree: this.merkleTree.serialize(),
@@ -342,18 +342,18 @@ class BlockchainThreatVault {
             if (data.registry) {
                 this.registry.importData(data.registry);
             }
-            
+
             if (data.merkleTree) {
                 await this.merkleTree.deserialize(data.merkleTree);
             }
-            
+
             if (data.localThreats) {
                 this.localThreats = new Set(data.localThreats);
             }
-            
+
             await this.saveThreatData();
             ;
-            
+
         } catch (error) {
             ;
             throw error;
@@ -367,19 +367,6 @@ class BlockchainThreatVault {
         this.isInitialized = false;
         ;
     }
-}
-
-// Make available globally
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports = BlockchainThreatVault;
-} else {
-    window.BlockchainThreatVault = BlockchainThreatVault;
-}
-
-// Initialize when loaded in browser extension
-if (typeof chrome !== 'undefined' && chrome.runtime) {
-    // Extension-specific initialization would go here
-    ;
 }
 
 // ES6 export for module imports
