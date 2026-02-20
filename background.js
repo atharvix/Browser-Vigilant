@@ -544,7 +544,8 @@ function truncateUrl(url, max) {
 
 const PRENAV_BRANDS = ["google", "facebook", "amazon", "apple", "microsoft", "paypal",
     "netflix", "instagram", "twitter", "linkedin", "whatsapp", "youtube", "yahoo", "ebay",
-    "coinbase", "binance", "paytm", "phonepe", "hdfc", "icici", "sbi", "flipkart", "gpay", "bhim"];
+    "coinbase", "binance", "metamask", "opensea", "paytm", "phonepe", "hdfc", "icici", "sbi", 
+    "flipkart", "gpay", "bhim", "trustwallet", "ledger", "trezor"];
 
 const PRENAV_SUSP_TLDS = new Set(["xyz", "tk", "top", "cf", "ml", "ga", "gq", "pw", "cc",
     "icu", "club", "online", "site", "website", "space", "live", "click", "link", "info",

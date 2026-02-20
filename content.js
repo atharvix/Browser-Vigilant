@@ -1,13 +1,125 @@
 /**
  * content.js — Browser Vigilant Detection Engine (Layers 1–4)
+ * Enhanced with Blockchain Threat Vault Integration
  *
  * Layer 1: 48-feature URL extraction via Rust WASM
  * Layer 2: ONNX ML ensemble inference (RF + GBM soft-vote)
  * Layer 3: Heuristic rule engine (Levenshtein, punycode, TLD, UPI)
  * Layer 4: DOM behavioral analysis (forms, iframes, obfuscated scripts)
+ * Layer 5: Blockchain-based threat verification and consensus
  *
- * Layer 5 (file downloads) is handled by background.js.
- *
+ * Layer 6 (file downloads) is handled by background.js.
+ */
+
+// ── Blockchain Threat Vault Integration ──────────────────────────────────────────
+// Initialize blockchain components
+let threatVault = null;
+let isVaultInitialized = false;
+let blockchainModules = null;
+
+// Load blockchain dependencies first
+async function loadBlockchainDependencies() {
+    if (blockchainModules) return blockchainModules;
+
+    try {
+        // Load all blockchain modules
+        const basePath = chrome.runtime.getURL('blockchain/');
+        const [merkleModule, consensusModule, registryModule, vaultModule] = await Promise.all([
+            import(basePath + 'merkle_tree.js'),
+            import(basePath + 'federated_consensus.js'),
+            import(basePath + 'threat_registry.js'),
+            import(basePath + 'blockchain_vault.js')
+        ]);
+
+        blockchainModules = {
+            MerkleTree: merkleModule.MerkleTree,
+            FederatedConsensus: consensusModule.FederatedConsensus,
+            ThreatRegistry: registryModule.ThreatRegistry,
+            BlockchainThreatVault: vaultModule.BlockchainThreatVault
+        };
+
+        console.log('[Blockchain] Dependencies loaded successfully');
+        return blockchainModules;
+    } catch (error) {
+        console.error('[Blockchain] Failed to load dependencies:', error);
+        return null;
+    }
+}
+
+async function initializeThreatVault() {
+    if (isVaultInitialized) return;
+
+    try {
+        // Load dependencies first
+        const modules = await loadBlockchainDependencies();
+        if (!modules) {
+            throw new Error('Failed to load blockchain dependencies');
+        }
+
+        // Create instances with proper dependencies
+        const { BlockchainThreatVault, MerkleTree, FederatedConsensus, ThreatRegistry } = modules;
+
+        // Initialize components in correct order
+        const merkleTree = new MerkleTree();
+        const consensus = new FederatedConsensus('browser-node-' + Date.now());
+        const registry = new ThreatRegistry();
+
+        // Create vault with dependencies
+        threatVault = new BlockchainThreatVault(merkleTree, consensus, registry);
+        await threatVault.initialize();
+        isVaultInitialized = true;
+        console.log('[Blockchain] Threat vault initialized successfully');
+    } catch (error) {
+        console.error('[Blockchain] Failed to initialize threat vault:', error);
+        threatVault = null;
+    }
+}
+
+// Enhanced threat checking with blockchain integration
+async function checkThreatWithBlockchain(url) {
+    if (!isVaultInitialized) {
+        await initializeThreatVault();
+    }
+
+    if (threatVault) {
+        try {
+            const result = await threatVault.isThreat(url);
+            if (result.isThreat) {
+                return {
+                    isThreat: true,
+                    confidence: 0.99, // High confidence from blockchain
+                    source: `blockchain_${result.source}`,
+                    threatType: 'BLOCKCHAIN_CONFIRMED'
+                };
+            }
+        } catch (error) {
+            console.warn('[Blockchain] Check failed, falling back:', error);
+        }
+    }
+
+    return null; // Fall back to traditional method
+}
+
+// Enhanced threat submission to blockchain
+async function submitThreatToBlockchain(domain, confidence, threatType, evidence) {
+    if (!isVaultInitialized) {
+        await initializeThreatVault();
+    }
+
+    if (threatVault) {
+        try {
+            const result = await threatVault.submitThreat(domain, confidence, threatType, evidence);
+            console.log(`[Blockchain] Threat submitted: ${domain}`);
+            return result;
+        } catch (error) {
+            console.error(`[Blockchain] Failed to submit threat ${domain}:`, error);
+        }
+    }
+
+    return null;
+}
+
+/**
  * Final verdict = weighted combination of all fired layers.
  * If verdict === "threat", page is replaced with block.html.
  */
@@ -41,6 +153,61 @@
         "steam", "roblox", "epic", "coinbase", "binance", "metamask", "opensea",
         "paytm", "phonepe", "gpay", "bhim", "razorpay", "hdfc", "icici", "sbi",
         "axis", "kotak", "airtel", "jio", "vodafone", "bsnl", "flipkart", "myntra",
+    ];
+
+    // Trusted cross-domain services that legitimately use forms/iframes
+    const TRUSTED_SERVICES = new Set([
+        // Form services
+        "forms.hsforms.com", "form.jotform.com", "form.typeform.com", "form.wufoo.com",
+        "form.asana.com", "form.clickup.com", "form.airtable.com", "form.google.com",
+        "form.microsoft.com", "form.salesforce.com", "form.hubspot.com",
+
+        // Analytics/Tracking services
+        "www.google-analytics.com", "analytics.google.com", "connect.facebook.net",
+        "static.ads-twitter.com", "snap.licdn.com", "platform.twitter.com",
+        "www.googletagmanager.com", "www.clarity.ms", "js.hs-scripts.com",
+
+        // CDN/Static services
+        "cdnjs.cloudflare.com", "unpkg.com", "cdn.jsdelivr.net", "ajax.googleapis.com",
+        "code.jquery.com", "stackpath.bootstrapcdn.com", "use.fontawesome.com",
+
+        // Payment services
+        "checkout.stripe.com", "js.stripe.com", "pay.google.com", "apple-pay-gateway.apple.com",
+        "api.paypal.com", "www.paypalobjects.com", "checkout.paypal.com",
+
+        // Crypto services
+        "widget.trustwallet.com", "cdn.live.ledger.com", "connect.trezor.io",
+        "widget.cloud.coinbase.com", "pay.sendwyre.com", "api.ramp.network",
+
+        // Authentication services
+        "accounts.google.com", "login.microsoftonline.com", "auth0.com", "okta.com",
+        "login.salesforce.com", "id.atlassian.com", "login.cloudflare.com"
+    ]);
+
+    // Trusted domain patterns (regex for subdomains)
+    const TRUSTED_PATTERNS = [
+        /\.cloudflare\.com$/,      // Cloudflare services
+        /\.cloudfront\.net$/,      // AWS CloudFront
+        /\.azureedge\.net$/,       // Azure CDN
+        /\.fastly\.net$/,          // Fastly CDN
+        /\.akamaihd\.net$/,        // Akamai
+        /\.doubleclick\.net$/,     // Google advertising
+        /\.googlesyndication\.com$/, // Google ads
+        /\.googleusercontent\.com$/, // Google services
+        /\.gstatic\.com$/,         // Google static
+        /\.facebook\.com$/,        // Facebook services
+        /\.fbcdn\.net$/,           // Facebook CDN
+        /\.twitter\.com$/,         // Twitter services
+        /\.twimg\.com$/,           // Twitter images
+        /\.linkedin\.com$/,        // LinkedIn services
+        /\.licdn\.com$/,           // LinkedIn CDN
+        /\.youtube\.com$/,         // YouTube
+        /\.ytimg\.com$/,           // YouTube images
+        /\.github\.com$/,          // GitHub
+        /\.githubusercontent\.com$/, // GitHub assets
+        /\.npmjs\.org$/,           // NPM
+        /\.jsdelivr\.net$/,        // jsDelivr CDN
+        /\.unpkg\.com$/,           // unpkg CDN
     ];
 
     const SUSPICIOUS_TLDS = new Set([
@@ -134,10 +301,25 @@
         rule("H2", "IP Address in URL", 0.85,
             /^\d{1,3}(\.\d{1,3}){3}$/.test(p.host));
 
-        // H3 — Brand Levenshtein spoof (edit dist 1–2)
+        // H3 — Brand Levenshtein spoof (edit dist 1–2) WITH CONTEXT AWARENESS
         const bd = minBrandDistance(p.domain);
-        rule("H3", `Brand Spoof (edit-dist ${bd})`, 0.8,
-            bd > 0 && bd <= 2);
+        // Additional context checks to reduce false positives
+        const isCryptoContext = window.location.hostname.includes("wallet") ||
+            window.location.hostname.includes("crypto") ||
+            window.location.hostname.includes("blockchain") ||
+            document.title.toLowerCase().includes("wallet") ||
+            document.title.toLowerCase().includes("crypto");
+
+        // For crypto-related sites, be more lenient with brand matching
+        const brandThreshold = isCryptoContext ? 3 : 2; // Allow more distance for crypto sites
+
+        // Check if this might be a legitimate service provider (e.g., metamask.io is legitimate)
+        const isKnownLegit = BRANDS.some(b => p.host.includes(b)) ||
+            TRUSTED_SERVICES.has(p.host) ||
+            TRUSTED_PATTERNS.some(pattern => pattern.test(p.host));
+
+        rule("H3", `Brand Spoof (edit-dist ${bd})`, isKnownLegit ? 0.2 : 0.8,
+            bd > 0 && bd <= brandThreshold && !isKnownLegit);
 
         // H4 — Suspicious TLD
         rule("H4", `Suspicious TLD (.${p.tld})`, 0.6,
@@ -261,32 +443,71 @@
         rule("Password Form on HTTP", 0.7,
             hasPasswordField && window.location.protocol !== "https:");
 
-        // D2 — Form action pointing to different domain
+        // D2 — Form action pointing to different domain (INTELLIGENT VERSION)
         document.querySelectorAll("form").forEach(form => {
             const action = form.getAttribute("action") || "";
             if (action.startsWith("http") || action.startsWith("//")) {
                 try {
                     const actionHost = new URL(action, window.location.href).hostname;
                     if (actionHost && actionHost !== window.location.hostname) {
-                        score += 0.8;
-                        signals.push(`Cross-Domain Form Action → ${actionHost}`);
+                        // Check if the target domain is trusted
+                        const isTrusted = TRUSTED_SERVICES.has(actionHost) ||
+                            TRUSTED_PATTERNS.some(pattern => pattern.test(actionHost));
+
+                        if (!isTrusted) {
+                            // Only flag if it's not a known legitimate service
+                            // Reduced weight from 0.8 to 0.3 for legitimate cross-domain forms
+                            score += 0.3;
+                            signals.push(`Cross-Domain Form Action → ${actionHost} (untrusted)`);
+                        } else {
+                            // Trusted service - very low weight or none
+                            signals.push(`Cross-Domain Form Action → ${actionHost} (trusted service)`);
+                        }
                     }
                 } catch { }
             }
         });
 
-        // D3 — Invisible iframes (credential overlay / clickjacking)
-        let hasHiddenIframe = false;
+        // D3 — Invisible iframes (INTELLIGENT VERSION - context-aware)
+        let hiddenIframeCount = 0;
+        let suspiciousIframes = 0;
         document.querySelectorAll("iframe").forEach(iframe => {
             const style = window.getComputedStyle(iframe);
             const w = parseFloat(style.width || "0");
             const h = parseFloat(style.height || "0");
+            const src = iframe.src || "";
+
+            // Check if iframe source is from a trusted service
+            let isTrustedSource = false;
+            try {
+                if (src) {
+                    const iframeHost = new URL(src, window.location.href).hostname;
+                    isTrustedSource = TRUSTED_SERVICES.has(iframeHost) ||
+                        TRUSTED_PATTERNS.some(pattern => pattern.test(iframeHost));
+                }
+            } catch { }
+
+            // Count hidden iframes
             if (style.display === "none" || style.visibility === "hidden" || w < 2 || h < 2) {
-                hasHiddenIframe = true;
+                hiddenIframeCount++;
+                // Only count as suspicious if it's NOT from a trusted source
+                if (!isTrustedSource) {
+                    suspiciousIframes++;
+                }
             }
         });
-        // Weight reduced from 0.7 to 0.15 since legitimate trackers use this heavily
-        rule("Hidden Iframe Detected", 0.15, hasHiddenIframe);
+
+        // Weight based on suspicious vs total iframes
+        if (suspiciousIframes > 0) {
+            // Reduced from 0.15 to 0.1, and scaled by suspicious ratio
+            const weight = Math.min(0.1 * (suspiciousIframes / Math.max(1, hiddenIframeCount)), 0.3);
+            rule("Suspicious Hidden Iframe Detected", weight, suspiciousIframes > 0);
+        }
+
+        // Log trusted iframes for transparency
+        if (hiddenIframeCount > suspiciousIframes) {
+            signals.push(`${hiddenIframeCount - suspiciousIframes} trusted hidden iframes detected`);
+        }
 
         // D4 — Obfuscated scripts (eval, atob, unescape — characteristic of malware)
         let hasObfScript = false;
@@ -349,28 +570,54 @@
         let features = null;
 
         try {
-            // Layer 1: Init WASM from global injected script
-            const wasmBinaryPath = chrome.runtime.getURL("wasm-build/wasm_feature_bg.wasm");
-            if (typeof window.wasm_bindgen === "function") {
-                await window.wasm_bindgen(wasmBinaryPath);
+            // Wait for WASM to be ready via our loader
+            const maxWait = 3000; // Reduced wait time
+            const startTime = Date.now();
+
+            // Wait for wasm-loader to initialize
+            while (!window.wasmFeatureExtractor && (Date.now() - startTime) < maxWait) {
+                await new Promise(resolve => setTimeout(resolve, 50));
             }
-            features = Array.from(window.wasm_bindgen.extract_features(url));
+
+            // Use fallback if WASM not available
+            if (!window.wasmFeatureExtractor || !window.wasmFeatureExtractor.extract_features) {
+                console.warn('[BV] WASM not available, using basic feature extraction');
+                features = basicFeatureExtraction(url);
+            } else {
+                // Extract features using WASM
+                features = window.wasmFeatureExtractor.extract_features(url);
+            }
 
             // Layer 2: ONNX ML inference
             // Disable threading + JSEP — only basic ort-wasm.wasm or ort-wasm-simd.wasm exist
             ort.env.wasm.numThreads = 1;     // stops ORT from loading *-threaded.jsep.mjs
-            ort.env.wasm.simd = true;  // use SIMD if available
+            ort.env.wasm.simd = false;  // disable simd to avoid any SIMD web worker loading issues completely
+            ort.env.workers = 0;
             ort.env.wasm.proxy = false; // no web worker proxy
             ort.env.wasm.wasmPaths = {
                 'ort-wasm.wasm': chrome.runtime.getURL('ort-wasm.wasm'),
                 'ort-wasm-simd.wasm': chrome.runtime.getURL('ort-wasm-simd.wasm'),
                 // Fallback: if only basic wasm exists, map simd → basic
             };
+            ort.env.wasm.wasmCorejsPaths = undefined;
+            if (ort.env.wasm.corejs) ort.env.wasm.corejs = undefined;
+            if (typeof ort.env.wasm.initializeWebAssembly === 'function') {
+                // Ignore
+            }
 
             const modelUrl = chrome.runtime.getURL("model.onnx");
             const session = await ort.InferenceSession.create(modelUrl, {
                 executionProviders: ["wasm"],
                 graphOptimizationLevel: "basic",
+                enableMemPattern: false,
+                enableCpuMemArena: false,
+                extraOptions: {
+                    session: {
+                        intra_op_num_threads: 1,
+                        inter_op_num_threads: 1,
+                        use_deterministic_compute: 1
+                    }
+                }
             });
             const tensor = new ort.Tensor("float32", Float32Array.from(features), [1, 56]);
             const results = await session.run({ input: tensor });
@@ -399,9 +646,10 @@
         }
 
         // Weights: ML is primary, heuristics and DOM supplement
-        const mlWeight = 0.55;
-        const hWeight = 0.30;
-        const domWeight = 0.15;
+        // REDUCED weights to prevent false positives
+        const mlWeight = 0.65;      // Increased from 0.55
+        const hWeight = 0.25;       // Reduced from 0.30
+        const domWeight = 0.10;     // Reduced from 0.15
 
         let composite = 0;
         let usedLayers = 0;
@@ -424,14 +672,15 @@
         const allSignals = [...heuristicResult.signals, ...domResult.signals];
         const hardTriggered = allSignals.some(s => HARD_BLOCK_SIGNALS.some(hb => s.includes(hb)));
 
-        const threshold = settings?.blockThreshold ?? 0.50;
+        // INCREASED thresholds to prevent false positives
+        const threshold = settings?.blockThreshold ?? 0.65;  // Increased from 0.50
         const strictMode = settings?.strictMode ?? false;
-        const effectiveThreshold = strictMode ? 0.35 : threshold;
+        const effectiveThreshold = strictMode ? 0.50 : threshold; // Increased from 0.35
 
         let verdict;
         if (hardTriggered || composite >= effectiveThreshold) {
             verdict = "threat";
-        } else if (composite >= effectiveThreshold * 0.6) {
+        } else if (composite >= effectiveThreshold * 0.5) {  // Reduced from 0.6
             verdict = "warning";
         } else {
             verdict = "safe";
@@ -461,7 +710,21 @@
     // ── Main execution ────────────────────────────────────────────────────────────
 
     async function executeVigilant() {
-        // Get settings from background
+        const t0 = performance.now();
+        const url = window.location.href;
+
+        // Layer 0: Blockchain Threat Vault Check (fastest, O(1) lookup)
+        try {
+            const blockchainResult = await checkThreatWithBlockchain(url);
+            if (blockchainResult && blockchainResult.isThreat) {
+                console.log(`[Blockchain] Threat detected: ${url} (${blockchainResult.source})`);
+                // Immediately block without further processing
+                blockPage(blockchainResult.threatType, 99, [`Blockchain verified threat: ${blockchainResult.source}`]);
+                return;
+            }
+        } catch (error) {
+            console.warn('[Blockchain] Check failed, continuing with traditional detection:', error);
+        }
         let settings = { protection: true, domAnalysis: true, autoBlock: true }; // robust default
         try {
             // content.js does not get a valid tab object from getCurrent, so we omit tabId
@@ -501,8 +764,31 @@
         ];
 
         // Critical Whitelist: Never hard-block trusted essential domains based on heuristics alone
-        const SAFE_DOMAINS = ["google.com", "youtube.com", "github.com", "microsoft.com"];
-        const isWhitelisted = SAFE_DOMAINS.some(d => window.location.hostname === d || window.location.hostname.endsWith("." + d));
+        const SAFE_DOMAINS = [
+            "google.com", "youtube.com", "github.com", "microsoft.com", "apple.com",
+            "metamask.io", "support.metamask.io", "coinbase.com", "binance.com",
+            "opensea.io", "trustwallet.com", "ledger.com", "trezor.io"
+        ];
+
+        // Extended trusted domains with patterns
+        const TRUSTED_DOMAIN_PATTERNS = [
+            /\.github\.io$/,           // GitHub Pages
+            /\.vercel\.app$/,          // Vercel deployments
+            /\.netlify\.app$/,         // Netlify deployments
+            /\.surge\.sh$/,            // Surge.sh
+            /\.firebaseapp\.com$/,     // Firebase
+            /\.web\.app$/,             // Firebase hosting
+            /\.onrender\.com$/,        // Render.com
+            /\.railway\.app$/,         // Railway
+            /\.fly\.dev$/,             // Fly.io
+            /\.herokuapp\.com$/,       // Heroku
+            /\.pages\.dev$/,           // Cloudflare Pages
+            /\.workers\.dev$/,         // Cloudflare Workers
+        ];
+
+        const isWhitelisted = SAFE_DOMAINS.some(d =>
+            window.location.hostname === d || window.location.hostname.endsWith("." + d)
+        ) || TRUSTED_DOMAIN_PATTERNS.some(pattern => pattern.test(window.location.hostname));
 
         let hasInstantBlock = false;
         if (!isWhitelisted) {
@@ -545,6 +831,30 @@
 
         // Block if threat and auto-block is enabled
         if (verdictResult.verdict === "threat" && settings.autoBlock !== false) {
+            // Submit high-confidence threats to blockchain for network validation
+            if (verdictResult.composite >= 0.8) {
+                try {
+                    const threatType = determineThreatType(hResult.signals, domResult.signals, mlProb);
+                    const evidence = {
+                        url: window.location.href,
+                        features: features,
+                        heuristicSignals: hResult.signals,
+                        domSignals: domResult.signals,
+                        mlConfidence: mlProb,
+                        compositeScore: verdictResult.composite
+                    };
+
+                    await submitThreatToBlockchain(
+                        window.location.hostname,
+                        verdictResult.composite,
+                        threatType,
+                        evidence
+                    );
+                } catch (error) {
+                    console.warn('[Blockchain] Failed to submit threat:', error);
+                }
+            }
+
             blockPage(threatType, verdictResult.riskScore, allSignals);
         }
     }
