@@ -65,6 +65,21 @@ fn shannon_entropy(s: &str) -> f32 {
         .sum()
 }
 
+fn char_ngram_entropy(s: &str, n: usize) -> f32 {
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() < n { return 0.0; }
+    let mut freqs = std::collections::HashMap::new();
+    for i in 0..=(chars.len() - n) {
+        let ng: String = chars[i..i+n].iter().collect();
+        *freqs.entry(ng).or_insert(0) += 1;
+    }
+    let total = freqs.values().sum::<i32>() as f32;
+    freqs.values().map(|&count| {
+        let p = count as f32 / total;
+        -p * p.log2()
+    }).sum()
+}
+
 /// Wagner-Fischer Levenshtein distance O(min(m,n)) space
 fn levenshtein(a: &str, b: &str) -> usize {
     let a: Vec<char> = a.chars().collect();
@@ -190,7 +205,7 @@ fn parse_url(url: &str) -> UrlParts {
 
 #[wasm_bindgen]
 pub fn extract_features(url: &str) -> Vec<f32> {
-    let mut f = vec![0.0f32; 48];
+    let mut f = vec![0.0f32; 56];
     let p   = parse_url(url);
     let low = url.to_lowercase();
     let host  = &p.host;
@@ -200,92 +215,89 @@ pub fn extract_features(url: &str) -> Vec<f32> {
     let domain = &p.reg_domain;
     let sub    = &p.subdomain;
 
-    // 0  URL total length
+    // ── GROUP A: Lexical Structure (F0–F15) ────────────────────────────────────
     f[0] = url.len() as f32;
-    // 1  Host length
     f[1] = host.len() as f32;
-    // 2  Path length
     f[2] = path.len() as f32;
-    // 3  Query length
     f[3] = query.len() as f32;
-    // 4  Dots in whole URL
     f[4] = url.matches('.').count() as f32;
-    // 5  Hyphens
     f[5] = url.matches('-').count() as f32;
-    // 6  Underscores
     f[6] = url.matches('_').count() as f32;
-    // 7  Slashes after protocol
     let no_proto = if let Some(pos) = url.find("://") { &url[pos+3..] } else { url };
     f[7] = no_proto.matches('/').count() as f32;
-    // 8  At-signs
     f[8] = url.matches('@').count() as f32;
-    // 9  Digit count
     let digits = url.chars().filter(|c| c.is_ascii_digit()).count();
     f[9]  = digits as f32;
-    // 10 Digit ratio
     f[10] = digits as f32 / url.len().max(1) as f32;
-    // 11 HTTPS flag
     f[11] = if p.scheme == "https" { 1.0 } else { 0.0 };
-    // 12 IP in host
     f[12] = if has_ip(host) { 1.0 } else { 0.0 };
-    // 13 Punycode
     f[13] = if host.contains("xn--") { 1.0 } else { 0.0 };
-    // 14 Subdomain depth
     f[14] = p.labels.len().saturating_sub(2) as f32;
-    // 15 URL Shannon entropy
-    f[15] = shannon_entropy(url);
-    // 16 Host Shannon entropy
-    f[16] = shannon_entropy(host);
-    // 17 Path Shannon entropy
-    f[17] = shannon_entropy(path);
-    // 18 Suspicious TLD
-    f[18] = if SUSPICIOUS_TLDS.contains(&tld.as_str()) { 1.0 } else { 0.0 };
-    // 19 Brand spoof (min Levenshtein ≤ 2, not exact match)
+    f[15] = match p.port {
+        Some(pt) if pt != 80 && pt != 443 && pt != 8080 && pt != 8443 => 1.0,
+        _ => 0.0,
+    };
+
+    // ── GROUP B: Information Theory (F16–F20) ──────────────────────────────────
+    f[16] = shannon_entropy(url);
+    f[17] = shannon_entropy(host);
+    f[18] = shannon_entropy(path);
+    f[19] = char_ngram_entropy(host, 2);
+    f[20] = char_ngram_entropy(host, 3);
+
+    // ── GROUP C: Brand Similarity (F21–F23) ────────────────────────────────────
     let min_dist = min_brand_distance(domain);
-    f[19] = if min_dist > 0 && min_dist <= 2 { 1.0 } else { 0.0 };
-    // 20 Normalized min brand distance
-    f[20] = (min_dist.min(10) as f32) / 10.0;
-    // 21 Login keywords
-    f[21] = if LOGIN_KW.iter().any(|k| low.contains(k)) { 1.0 } else { 0.0 };
-    // 22 Trust keywords in host
-    f[22] = if TRUST_KW.iter().any(|k| host.contains(k)) { 1.0 } else { 0.0 };
-    // 23 Payment keywords
-    f[23] = if PAY_KW.iter().any(|k| low.contains(k)) { 1.0 } else { 0.0 };
-    // 24 Free/prize keywords
-    f[24] = if FREE_KW.iter().any(|k| low.contains(k)) { 1.0 } else { 0.0 };
-    // 25 Hyphen in host
-    f[25] = if host.contains('-') { 1.0 } else { 0.0 };
-    // 26 Double extension (.pdf.exe etc.)
-    let double_ext = ["pdf","doc","docx","xls","jpg","jpeg","png","gif","zip"];
+    f[21] = if min_dist > 0 && min_dist <= 2 { 1.0 } else { 0.0 };
+    f[22] = (min_dist.min(10) as f32) / 10.0;
+    let brand_sub = BRANDS.iter().any(|b| sub.contains(b));
+    let brand_reg = domain.split('.').next().map(|d| BRANDS.iter().any(|b| d.contains(b))).unwrap_or(false);
+    f[23] = if brand_sub && !brand_reg { 1.0 } else { 0.0 };
+
+    // ── GROUP D: Keyword Signals (F24–F30) ─────────────────────────────────────
+    let fraud_kw = ["kyc","refund","tax","block","suspend","urgent","helpdesk","support","care","alert"];
+    let free_kw_ex = ["free","bonus","prize","winner","giveaway","reward","claim","gift","lucky","congratulations"];
+    let login_kw_ex = ["login","signin","sign-in","account","verify","auth","authenticate","confirm","update"];
+    f[24] = if login_kw_ex.iter().any(|k| low.contains(k)) { 1.0 } else { 0.0 };
+    f[25] = if TRUST_KW.iter().chain(login_kw_ex.iter()).any(|k| host.contains(k)) { 1.0 } else { 0.0 }; // roughly matches features.py trust_kw
+    f[26] = if PAY_KW.iter().any(|k| low.contains(k)) { 1.0 } else { 0.0 };
+    f[27] = if free_kw_ex.iter().any(|k| low.contains(k)) { 1.0 } else { 0.0 };
+    f[28] = if fraud_kw.iter().any(|k| low.contains(k)) { 1.0 } else { 0.0 };
+    
+    let all_kw_count = login_kw_ex.iter().chain(TRUST_KW).chain(PAY_KW).chain(free_kw_ex.iter()).chain(fraud_kw.iter())
+        .filter(|k| low.contains(**k)).count();
+    f[29] = (all_kw_count as f32 / 6.0).min(1.0);
+    f[30] = if host.contains('-') { 1.0 } else { 0.0 };
+
+    // ── GROUP E: Obfuscation & Encoding (F31–F37) ──────────────────────────────
+    let double_ext = ["pdf","doc","docx","xls","jpg","jpeg","png","gif","mp4","zip"];
     let danger_ext = ["exe","js","php","bat","ps1","vbs","cmd","scr","dll"];
     let path_low = path.to_lowercase();
-    f[26] = if double_ext.iter().any(|de| danger_ext.iter().any(|xe|
+    f[31] = if double_ext.iter().any(|de| danger_ext.iter().any(|xe|
         path_low.contains(&format!(".{}.{}", de, xe)))) { 1.0 } else { 0.0 };
-    // 27 Percent-encoding ratio
     let pct = count_hex_encoded(url);
-    f[27] = pct as f32 / url.len().max(1) as f32;
-    // 28 Query param count
-    f[28] = if query.is_empty() { 0.0 } else { query.matches('&').count() as f32 + 1.0 };
-    // 29 Non-standard port
-    f[29] = match p.port {
-        None => 0.0,
-        Some(pt) if pt == 80 || pt == 443 || pt == 8080 || pt == 8443 => 0.0,
-        Some(_) => 1.0,
-    };
-    // 30 Path depth (slashes in path)
-    f[30] = path.matches('/').count() as f32;
-    // 31 Fragment present
-    f[31] = if !p.fragment.is_empty() { 1.0 } else { 0.0 };
-    // 32 Data URI
-    f[32] = if low.starts_with("data:") { 1.0 } else { 0.0 };
-    // 33 Path traversal
-    f[33] = if path.contains("..") || low.contains("%2e%2e") { 1.0 } else { 0.0 };
-    // 34 Base64-like string in query (≥20 base64 chars contiguous)
-    f[34] = {
+    f[32] = pct as f32 / url.len().max(1) as f32;
+    f[33] = (pct as f32 / (url.len() as f32 / 3.0).max(1.0)).min(1.0);
+    f[34] = if query.is_empty() { 0.0 } else { query.matches('&').count() as f32 + 1.0 };
+    f[35] = if !p.fragment.is_empty() { 1.0 } else { 0.0 };
+    f[36] = if low.starts_with("data:") { 1.0 } else { 0.0 };
+    f[37] = if path.contains("..") || low.contains("%2e%2e") { 1.0 } else { 0.0 };
+
+    // ── GROUP F: Domain Quality (F38–F47) ──────────────────────────────────────
+    f[38] = if SUSPICIOUS_TLDS.contains(&tld.as_str()) { 1.0 } else { 0.0 };
+    f[39] = tld.len() as f32;
+    f[40] = if !sub.is_empty() { 1.0 } else { 0.0 };
+    f[41] = if host.chars().all(|c| c.is_ascii_digit() || c == '.') { 1.0 } else { 0.0 };
+    let unique: std::collections::HashSet<char> = url.chars().collect();
+    f[42] = unique.len() as f32 / url.len().max(1) as f32;
+    let vowels: usize = host.chars().filter(|c| "aeiou".contains(*c)).count();
+    let alpha: usize  = host.chars().filter(|c| c.is_alphabetic()).count();
+    f[43] = vowels as f32 / alpha.max(1) as f32;
+    f[44] = max_consecutive_consonants(host) as f32;
+    f[45] = if SHORT_SERVICES.contains(&domain.as_str()) { 1.0 } else { 0.0 };
+    f[46] = {
         let mut has_b64 = false;
-        let qb = query.as_bytes();
         let mut run = 0usize;
-        for &b in qb {
+        for b in query.bytes() {
             if b.is_ascii_alphanumeric() || b == b'+' || b == b'/' || b == b'=' {
                 run += 1;
                 if run >= 20 { has_b64 = true; break; }
@@ -293,55 +305,54 @@ pub fn extract_features(url: &str) -> Vec<f32> {
         }
         if has_b64 { 1.0 } else { 0.0 }
     };
-    // 35 Hex encoding density
-    f[35] = (pct as f32 / (url.len() as f32 / 3.0).max(1.0)).min(1.0);
-    // 36 TLD length
-    f[36] = tld.len() as f32;
-    // 37 Has subdomain
-    f[37] = if !sub.is_empty() { 1.0 } else { 0.0 };
-    // 38 Domain is numeric (decimal IP)
-    f[38] = if host.chars().all(|c| c.is_ascii_digit() || c == '.') { 1.0 } else { 0.0 };
-    // 39 UPI VPA in URL
+    f[47] = path.matches('/').count() as f32;
+
+    // ── GROUP G: UPI / Payment Specific (F48–F52) ──────────────────────────────
     let upi_found = find_upi_vpa(url);
-    f[39] = if !upi_found.is_empty() { 1.0 } else { 0.0 };
-    // 40 Suspicious UPI handle
-    f[40] = {
+    f[48] = if !upi_found.is_empty() { 1.0 } else { 0.0 };
+    f[49] = {
         let mut sus = 0.0f32;
+        let fraud_pfx_ex = ["refund","tax","prize","block","kyc","urgent","helpdesk","support","care"];
         for (prefix, handle) in &upi_found {
-            let h = handle.as_str();
-            if !LEGIT_UPI_HANDLES.contains(&h) {
+            if !LEGIT_UPI_HANDLES.contains(&handle.as_str()) {
                 sus = 1.0; break;
             }
-            if FRAUD_PFX.iter().any(|fp| prefix.contains(fp)) {
+            if fraud_pfx_ex.iter().any(|fp| prefix.contains(fp)) {
                 sus = 1.0; break;
             }
         }
         sus
     };
-    // 41 Dangerous file extension in path
-    f[41] = {
-        let ext = path_low.rsplit('.').next().unwrap_or("").split('?').next().unwrap_or("").split('#').next().unwrap_or("");
-        if DANGEROUS_EXTS.contains(&ext) { 1.0 } else { 0.0 }
+    f[50] = if low.contains("upi://pay") || low.contains("pa=") && low.contains("@") || low.contains("vpa=") { 1.0 } else { 0.0 };
+
+    // ── GROUP H: File & Extension Risk (F51–F55) ───────────────────────────────
+    let ext = path_low.rsplit('.').next().unwrap_or("").split('?').next().unwrap_or("").split('#').next().unwrap_or("");
+    f[51] = if DANGEROUS_EXTS.contains(&ext) { 1.0 } else { 0.0 };
+    let admin_paths = ["/wp-admin/", "/admin/", "/phpmyadmin/", "/cgi-bin/"];
+    f[52] = if admin_paths.iter().any(|p| low.contains(p)) { 1.0 } else { 0.0 };
+    let redirect_kws = ["redirect=http", "returnurl=http", "continue=http", "next=http", "goto=http", "url=http"];
+    f[53] = if redirect_kws.iter().any(|p| low.contains(p)) { 1.0 } else { 0.0 };
+    let max_rep = {
+        let mut max_count = 0;
+        let unique_host: std::collections::HashSet<char> = host.chars().collect();
+        for &ch in &unique_host {
+            let count = host.chars().filter(|&c| c == ch).count();
+            if count > max_count { max_count = count; }
+        }
+        max_count
     };
-    // 42 Short URL service
-    f[42] = if SHORT_SERVICES.contains(&domain.as_str()) { 1.0 } else { 0.0 };
-    // 43 Brand in subdomain but not registered domain
-    let brand_in_sub = BRANDS.iter().any(|b| sub.contains(b));
-    let brand_in_reg = domain.split('.').next().map(|d| BRANDS.iter().any(|b| d.contains(b))).unwrap_or(false);
-    f[43] = if brand_in_sub && !brand_in_reg { 1.0 } else { 0.0 };
-    // 44 URL compression ratio (unique chars / len)
-    let unique: std::collections::HashSet<char> = url.chars().collect();
-    f[44] = unique.len() as f32 / url.len().max(1) as f32;
-    // 45 Vowel ratio in host
-    let vowels: usize = host.chars().filter(|c| "aeiou".contains(*c)).count();
-    let alpha: usize  = host.chars().filter(|c| c.is_alphabetic()).count();
-    f[45] = vowels as f32 / alpha.max(1) as f32;
-    // 46 Max consecutive consonants in host (gibberish score)
-    f[46] = max_consecutive_consonants(host) as f32;
-    // 47 Total keyword density
-    let all_kw_count = LOGIN_KW.iter().chain(TRUST_KW).chain(PAY_KW).chain(FREE_KW)
-        .filter(|k| low.contains(*k)).count();
-    f[47] = (all_kw_count as f32 / 5.0).min(1.0);
+    f[54] = max_rep as f32 / host.len().max(1) as f32;
+    f[55] = {
+        let mut has_hex_token = false;
+        let mut run = 0;
+        for c in low.chars() {
+            if c.is_ascii_hexdigit() {
+                run += 1;
+                if run >= 32 { has_hex_token = true; break; }
+            } else { run = 0; }
+        }
+        if has_hex_token { 1.0 } else { 0.0 }
+    };
 
     f
 }

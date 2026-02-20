@@ -89,191 +89,65 @@
     $: currentUrl = tabState?.url ?? null;
     $: features = tabState?.features ?? [];
 
-    // ── Quick URL scanner (popup-side heuristics, no content script required) ──
+    // ── URL scanner — delegates ALL logic to background.js ──────────────────
+    // No duplicated brand lists, TLD lists, or heuristics here.
+    // background.js runs prenavScan() + Vault lookup and returns the result.
     let scanInput = "";
-    let scanResult = null; // { verdict, riskScore, signals, threatType }
+    let scanResult = null;
     let scanning = false;
+    let scanError = "";
 
-    const SCAN_BRANDS = [
-        "google",
-        "facebook",
-        "amazon",
-        "apple",
-        "microsoft",
-        "paypal",
-        "netflix",
-        "instagram",
-        "twitter",
-        "linkedin",
-        "youtube",
-        "yahoo",
-        "ebay",
-        "coinbase",
-        "binance",
-        "paytm",
-        "hdfc",
-        "icici",
-        "sbi",
-        "flipkart",
-    ];
-    const SCAN_SUSP_TLDS = new Set([
-        "xyz",
-        "tk",
-        "top",
-        "cf",
-        "ml",
-        "ga",
-        "gq",
-        "pw",
-        "cc",
-        "icu",
-        "club",
-        "online",
-        "site",
-        "space",
-        "live",
-        "click",
-        "link",
-        "info",
-    ]);
-    const SCAN_LOGIN_KW = [
-        "login",
-        "signin",
-        "verify",
-        "account",
-        "auth",
-        "confirm",
-        "update",
-        "secure",
-    ];
-    const SCAN_FREE_KW = [
-        "free",
-        "prize",
-        "winner",
-        "claim",
-        "reward",
-        "lucky",
-        "giveaway",
-        "bonus",
-    ];
-
-    function scanLev(a, b) {
-        const m = a.length,
-            n = b.length;
-        let prev = Array.from({ length: n + 1 }, (_, i) => i);
-        for (let i = 1; i <= m; i++) {
-            const c = [i];
-            for (let j = 1; j <= n; j++)
-                c[j] = Math.min(
-                    prev[j] + 1,
-                    c[j - 1] + 1,
-                    prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1),
-                );
-            prev = c;
-        }
-        return prev[n];
-    }
-
-    function quickScan(url) {
-        let score = 0;
-        const sigs = [];
-        const low = url.toLowerCase().trim();
-
-        let host = "",
-            tld = "",
-            domain = "",
-            path = "",
-            scheme = "";
-        try {
-            const u = new URL(low.startsWith("http") ? low : "https://" + low);
-            host = u.hostname;
-            path = u.pathname;
-            tld = host.split(".").pop();
-            domain = host.split(".").slice(-2).join(".");
-            scheme = u.protocol.replace(":", "");
-        } catch {
-            return {
-                verdict: "error",
-                riskScore: 0,
-                signals: ["Invalid URL"],
-                threatType: "Parse Error",
-            };
-        }
-
-        if (host.includes("xn--")) {
-            score += 0.9;
-            sigs.push("Punycode / IDN Homograph");
-        }
-        if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) {
-            score += 0.85;
-            sigs.push("IP Address in URL");
-        }
-        if (SCAN_SUSP_TLDS.has(tld)) {
-            score += 0.6;
-            sigs.push(`Suspicious TLD (.${tld})`);
-        }
-        if (scheme !== "https") {
-            score += 0.3;
-            sigs.push("Not HTTPS");
-        }
-        if ((url.match(/@/g) || []).length > 1) {
-            score += 0.8;
-            sigs.push("Multiple @ Symbols");
-        }
-        if (host.split(".").length >= 5) {
-            score += 0.5;
-            sigs.push("Excessive Subdomain Depth");
-        }
-        if (SCAN_LOGIN_KW.some((k) => low.includes(k)) && scheme !== "https") {
-            score += 0.55;
-            sigs.push("Login Keywords on HTTP");
-        }
-        if (SCAN_FREE_KW.some((k) => low.includes(k))) {
-            score += 0.55;
-            sigs.push("Prize/Scam Keywords");
-        }
-        if (/upi|gpay|bhim|paytm/i.test(low)) {
-            score += 0.3;
-            sigs.push("UPI Payment Keywords");
-        }
-        if (/\.exe|\.scr|\.bat|\.ps1|\.vbs/i.test(path)) {
-            score += 0.75;
-            sigs.push("Executable File Extension");
-        }
-        if (/(%[0-9a-f]{2}){4,}/i.test(url)) {
-            score += 0.45;
-            sigs.push("Heavy URL Encoding");
-        }
-
-        const core = domain.split(".")[0] || "";
-        const minD = Math.min(...SCAN_BRANDS.map((b) => scanLev(core, b)));
-        if (minD > 0 && minD <= 2) {
-            score += 0.8;
-            sigs.push(`Brand Spoof (${core} ≈ known brand)`);
-        }
-
-        const total = Math.min(Math.round(score * 100), 100);
-        let verdict = total >= 50 ? "threat" : total >= 30 ? "warning" : "safe";
-        let threatType = sigs.length ? sigs[0] : "Clean";
-        return { verdict, riskScore: total, signals: sigs, threatType };
-    }
-
-    function handleScan() {
-        if (!scanInput.trim()) return;
+    async function handleScan() {
+        const url = scanInput.trim();
+        if (!url || scanning) return;
         scanning = true;
-        setTimeout(() => {
-            scanResult = quickScan(scanInput.trim());
+        scanError = "";
+        scanResult = null;
+        try {
+            if (
+                typeof chrome === "undefined" ||
+                !chrome?.runtime?.sendMessage
+            ) {
+                // Dev mode: basic URL validation only
+                try {
+                    new URL(url.startsWith("http") ? url : "https://" + url);
+                } catch {
+                    scanResult = {
+                        verdict: "error",
+                        riskScore: 0,
+                        signals: ["Invalid URL"],
+                        threatType: "Parse Error",
+                    };
+                    return;
+                }
+                scanResult = {
+                    verdict: "safe",
+                    riskScore: 0,
+                    signals: [],
+                    threatType: "Dev mode — load as extension to scan",
+                };
+                return;
+            }
+            const res = await chrome.runtime.sendMessage({
+                type: "SCAN_URL",
+                url,
+            });
+            if (res?.error) throw new Error(res.error);
+            scanResult = res;
+        } catch (e) {
+            scanError = "Scan failed: " + e.message;
+        } finally {
             scanning = false;
-        }, 400); // slight delay for UX
+        }
     }
 
     function handleKey(e) {
         if (e.key === "Enter") handleScan();
     }
-
     function clearScan() {
         scanInput = "";
         scanResult = null;
+        scanError = "";
     }
 </script>
 
