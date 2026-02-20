@@ -19,15 +19,18 @@
         }
 
         :root {
-            --red: #ef4444;
-            --red-dim: rgba(239, 68, 68, 0.12);
-            --red-glow: rgba(239, 68, 68, 0.35);
-            --amber: #f59e0b;
-            --bg: #050810;
-            --bg2: #0d1120;
-            --border: rgba(239, 68, 68, 0.2);
-            --text: #f0f4ff;
-            --muted: #4b5d73;
+            --red: #e76f51;
+            /* Softer, pastel red/orange */
+            --red-dim: rgba(231, 111, 81, 0.1);
+            --red-glow: rgba(231, 111, 81, 0.2);
+            --amber: #e9c46a;
+            --bg: #f8f9fa;
+            /* Soft light clean background */
+            --bg2: #ffffff;
+            --border: rgba(0, 0, 0, 0.08);
+            --text: #2b2d42;
+            /* Dark slate instead of pure black */
+            --muted: #6c757d;
             --mono: 'JetBrains Mono', monospace;
         }
 
@@ -362,7 +365,7 @@
             padding: 12px 28px;
             border-radius: 10px;
             background: transparent;
-            border: 1px solid rgba(255, 255, 255, 0.1);
+            border: 1px solid var(--border);
             color: var(--muted);
             font-family: 'Inter', sans-serif;
             font-size: 12px;
@@ -373,7 +376,7 @@
         }
 
         .btn-proceed:hover {
-            border-color: rgba(255, 255, 255, 0.2);
+            border-color: var(--muted);
             color: var(--text);
         }
 

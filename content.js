@@ -23,6 +23,12 @@
     if (window.__bvActive) return;
     window.__bvActive = true;
 
+    // Check if the user explicitly allowed this page via the block screen
+    if (new URL(window.location.href).searchParams.has("bv_allow")) {
+        console.log("[BV] User bypassed protection for this session.");
+        return;
+    }
+
     const t0 = performance.now();
 
     // ── Constants ────────────────────────────────────────────────────────────────
@@ -185,14 +191,31 @@
     // ── UPI Fraud Detection ───────────────────────────────────────────────────────
 
     function analyzeUPI(text) {
-        const vpaPattern = /([a-zA-Z0-9._-]+)@([a-zA-Z]+)/g;
+        // vpaPattern looks for prefix@handle, but ignores if the "handle" part looks like a full 
+        // domain name with a TLD (e.g., @gmail.com) by ensuring no dot follows the handle immediately
+        const vpaPattern = /([a-zA-Z0-9._-]+)@([a-zA-Z]+)(?!\.[a-zA-Z]{2,})/g;
         let match;
         while ((match = vpaPattern.exec(text)) !== null) {
             const prefix = match[1].toLowerCase();
             const handle = match[2].toLowerCase();
+
+            // If the handle is too short or just weird, skip it
+            if (handle.length < 2) continue;
+
             // Unknown handle
             if (!LEGIT_UPI_HANDLES.has(handle)) {
-                return { suspicious: true, reason: `Unknown UPI handle @${handle}` };
+                // If it's an unknown handle, it's not immediately suspicious unless it's a known fraud prefix
+                // to avoid false positives on random @mentions like @twitter
+                let isFraudPfx = false;
+                for (const fp of FRAUD_UPI_PREFIXES) {
+                    if (prefix.includes(fp)) {
+                        isFraudPfx = true; break;
+                    }
+                }
+                if (isFraudPfx) {
+                    return { suspicious: true, reason: `Fraudulent UPI prefix "${prefix}" on unknown handle @${handle}` };
+                }
+                continue; // otherwise just ignore non-whitelisted handles to prevent false positives
             }
             // Levenshtein spoof of a legit handle
             for (const legit of LEGIT_UPI_HANDLES) {
@@ -253,26 +276,33 @@
         });
 
         // D3 — Invisible iframes (credential overlay / clickjacking)
+        let hasHiddenIframe = false;
         document.querySelectorAll("iframe").forEach(iframe => {
             const style = window.getComputedStyle(iframe);
             const w = parseFloat(style.width || "0");
             const h = parseFloat(style.height || "0");
-            const hidden = style.display === "none" || style.visibility === "hidden" || w < 2 || h < 2;
-            rule("Hidden Iframe Detected", 0.7, hidden);
+            if (style.display === "none" || style.visibility === "hidden" || w < 2 || h < 2) {
+                hasHiddenIframe = true;
+            }
         });
+        // Weight reduced from 0.7 to 0.15 since legitimate trackers use this heavily
+        rule("Hidden Iframe Detected", 0.15, hasHiddenIframe);
 
         // D4 — Obfuscated scripts (eval, atob, unescape — characteristic of malware)
+        let hasObfScript = false;
         document.querySelectorAll("script:not([src])").forEach(script => {
             const src = script.textContent || "";
-            const obf = /\beval\s*\(|\batob\s*\(|\bunescape\s*\(|\bString\.fromCharCode/i.test(src);
-            rule("Obfuscated Script Detected", 0.75, obf);
+            if (/\beval\s*\(|\batob\s*\(|\bunescape\s*\(|\bString\.fromCharCode/i.test(src)) {
+                hasObfScript = true;
+            }
         });
+        rule("Obfuscated Script Detected", 0.2, hasObfScript);
 
         // D5 — Clipboard hijacking (copy event listener replacing clipboard)
         // Check for event listeners on window for 'copy' (heuristic: check page scripts)
         const allScriptText = Array.from(document.querySelectorAll("script:not([src])"))
             .map(s => s.textContent).join(" ");
-        rule("Clipboard Hijacking Script", 0.85,
+        rule("Clipboard/Polyfill Script", 0.15,
             /addEventListener\s*\(\s*['"]copy['"]/i.test(allScriptText) &&
             /clipboardData|getSelection/i.test(allScriptText));
 
@@ -292,14 +322,14 @@
 
         // D8 — Data URI in iframes or anchor href
         const dataUriElements = document.querySelectorAll('[src^="data:text"],[href^="data:text"]');
-        rule("Data URI Injection", 0.75, dataUriElements.length > 0);
+        rule("Data URI Injection", 0.2, dataUriElements.length > 0);
 
         // D9 — Excessive external resource origins (data exfiltration)
         const resourceOrigins = new Set();
         document.querySelectorAll("script[src]").forEach(s => {
             try { resourceOrigins.add(new URL(s.src, window.location.href).hostname); } catch { }
         });
-        rule("Excessive External Script Origins", 0.4, resourceOrigins.size > 8);
+        rule("Excessive External Script Origins", 0.2, resourceOrigins.size > 8);
 
         // D10 — Fake CAPTCHA (image with captcha-related alt/class on non-standard domain)
         const fakeCapt = document.querySelectorAll('img[alt*="captcha" i],[class*="captcha" i]');
@@ -321,8 +351,10 @@
         try {
             // Layer 1: Init WASM from global injected script
             const wasmBinaryPath = chrome.runtime.getURL("wasm-build/wasm_feature_bg.wasm");
-            await wasm_bindgen(wasmBinaryPath);
-            features = Array.from(wasm_bindgen.extract_features(url));
+            if (typeof window.wasm_bindgen === "function") {
+                await window.wasm_bindgen(wasmBinaryPath);
+            }
+            features = Array.from(window.wasm_bindgen.extract_features(url));
 
             // Layer 2: ONNX ML inference
             // Disable threading + JSEP — only basic ort-wasm.wasm or ort-wasm-simd.wasm exist
@@ -361,7 +393,11 @@
 
     // ── Verdict engine ────────────────────────────────────────────────────────────
 
-    function computeFinalVerdict(mlProb, heuristicResult, domResult, settings) {
+    function computeFinalVerdict(mlProb, heuristicResult, domResult, settings, isWhitelisted = false) {
+        if (isWhitelisted) {
+            return { verdict: "safe", riskScore: 0, composite: 0, hardTriggered: false };
+        }
+
         // Weights: ML is primary, heuristics and DOM supplement
         const mlWeight = 0.55;
         const hWeight = 0.30;
@@ -426,17 +462,23 @@
 
     async function executeVigilant() {
         // Get settings from background
-        let settings = {};
+        let settings = { protection: true, domAnalysis: true, autoBlock: true }; // robust default
         try {
-            const tabs = await new Promise(r => chrome.tabs.getCurrent(r));
+            // content.js does not get a valid tab object from getCurrent, so we omit tabId
             const state = await chrome.runtime.sendMessage({
-                type: "GET_STATE",
-                tabId: tabs?.id,
+                type: "GET_STATE"
             });
-            settings = state?.settings || {};
-        } catch { }
+            if (state && state.settings) {
+                settings = state.settings;
+            }
+        } catch {
+            console.warn("[BV] Failed to get settings from background. Using defaults.");
+        }
 
-        if (settings.protection === false) return;
+        if (settings.protection === false) {
+            console.log("[BV] Protection is disabled by user settings.");
+            return;
+        }
 
         // Layer 3: Heuristics (fast, synchronous)
         const hResult = runHeuristics(url);
@@ -457,14 +499,22 @@
             "Punycode/IDN Homograph", "Brand Hijacked in Subdomain",
             "Multiple @ Symbols", "Fake Credential Overlay",
         ];
-        const hasInstantBlock = [...hResult.signals, ...domResult.signals]
-            .some(s => INSTANT_BLOCK.some(ib => s.includes(ib)));
+
+        // Critical Whitelist: Never hard-block trusted essential domains based on heuristics alone
+        const SAFE_DOMAINS = ["google.com", "youtube.com", "github.com", "microsoft.com"];
+        const isWhitelisted = SAFE_DOMAINS.some(d => window.location.hostname === d || window.location.hostname.endsWith("." + d));
+
+        let hasInstantBlock = false;
+        if (!isWhitelisted) {
+            hasInstantBlock = [...hResult.signals, ...domResult.signals]
+                .some(s => INSTANT_BLOCK.some(ib => s.includes(ib)));
+        }
 
         // Layers 1+2: WASM + ONNX (async)
         const { mlProb, features } = await runWasmAndML(url);
 
         const scanMs = +(performance.now() - t0).toFixed(1);
-        const verdictResult = computeFinalVerdict(mlProb, hResult, domResult, settings);
+        const verdictResult = computeFinalVerdict(mlProb, hResult, domResult, settings, isWhitelisted);
         const allSignals = [...hResult.signals, ...domResult.signals];
 
         // Determine threat type label

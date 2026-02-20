@@ -22,6 +22,9 @@ const KEYS = {
 // Legacy alias so old chain reads still work during migration
 const CHAIN_LEGACY_KEY = "bv_threat_chain";
 
+const MAX_HISTORY = 100;
+const API_BASE = "http://localhost:3000/api/vault";
+
 const DEFAULT_SETTINGS = {
     protection: true,
     autoBlock: true,
@@ -33,7 +36,6 @@ const DEFAULT_SETTINGS = {
     strictMode: false,
 };
 
-const MAX_HISTORY = 200;
 
 // ── Merkle Threat Vault — in-memory hash cache ────────────────────────────────
 // SHA-256(hostname) of every confirmed-blocked domain.
@@ -81,6 +83,13 @@ async function getVault() {
     return data[KEYS.VAULT] || { blocks: [], merkleRoot: "0".repeat(64) };
 }
 
+async function checkVaultTamper() {
+    const data = await chrome.storage.local.get("bv_vault_tampered");
+    if (data.bv_vault_tampered) {
+        console.warn("[BV] Previous vault tamper detected. Rebuilding cache but not trusting Merkle root.");
+    }
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 chrome.runtime.onInstalled.addListener(async () => {
     const existing = await chrome.storage.local.get(KEYS.VAULT);
@@ -96,12 +105,16 @@ chrome.runtime.onInstalled.addListener(async () => {
     await ensureSettingsDefaults();
     await rebuildVaultCache();
     console.log("[BV] Browser Vigilant v2.0 installed.");
+    await syncThreatVault(); // Phase 5 community sync
 });
 
 chrome.runtime.onStartup.addListener(async () => {
+    console.log("[BV] Startup – checking state...");
     await resetDailyStatsIfNeeded();
     await rebuildVaultCache();   // rebuilds in-memory Set + verifies Merkle root
     await ensureSettingsDefaults();
+    await checkVaultTamper();
+    await syncThreatVault(); // Phase 5 community sync
 });
 
 // ── SHA-256 via Web Crypto (available in service workers) ─────────────────────
@@ -179,7 +192,44 @@ async function appendChainBlock(threatData) {
     blockedDomainHashes.add(domainHash);
     merkleRoot = vault.merkleRoot;
 
+    // Phase 5: Submit zero-day threat to Community Vault in background
+    submitThreatToVault(domainHash, block.dangerScore || 0.95);
+
     return block;
+}
+
+// ── Decentralized Community Threat Vault ──────────────────────────────────────
+async function submitThreatToVault(hash, confidence = 1.0) {
+    try {
+        await fetch(`${API_BASE}/submit`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ hash, source: 'extension-ml', confidence })
+        });
+        console.log(`[BV Vault] Submitted threat hash to community vault: ${hash.slice(0, 8)}...`);
+    } catch {
+        // Soft fail if server is unreachable
+    }
+}
+
+async function syncThreatVault() {
+    try {
+        const { bv_last_sync } = await chrome.storage.local.get("bv_last_sync");
+        const since = bv_last_sync || 0;
+
+        const res = await fetch(`${API_BASE}/sync?since=${since}&clientId=extension`);
+        if (!res.ok) return;
+
+        const data = await res.json();
+        if (data && data.hashes && data.hashes.length > 0) {
+            // Add all inbound community hashes to local memory cache instantly
+            data.hashes.forEach(h => blockedDomainHashes.add(h));
+            await chrome.storage.local.set({ "bv_last_sync": Date.now() });
+            console.log(`[BV Vault] Synced ${data.hashes.length} new community threats.`);
+        }
+    } catch {
+        // Soft fail if server unreachable
+    }
 }
 
 // ── Settings ──────────────────────────────────────────────────────────────────
@@ -327,7 +377,7 @@ async function handleMessage(message, sender) {
         const [tabState, settings, stats, history, vault, tampered] = await Promise.all([
             getTabState(tabId),
             getSettings(),
-            chrome.storage.local.get(KEYS.STATS).then(r => r[KEYS.STATS]),
+            chrome.storage.local.get(KEYS.STATS).then(r => r[KEYS.STATS] || { totalScanned: 0, totalBlocked: 0, threatsToday: 0 }),
             chrome.storage.local.get(KEYS.HISTORY).then(r => r[KEYS.HISTORY] || []),
             getVault(),
             chrome.storage.local.get("bv_vault_tampered").then(r => r.bv_vault_tampered || false),
