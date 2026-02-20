@@ -1,7 +1,3 @@
-<!-- ========================================================= -->
-<!-- ===================== HEADER ============================= -->
-<!-- ========================================================= -->
-
 <p align="center">
   <img src="https://capsule-render.vercel.app/api?type=waving&color=0:0f172a,100:1e3a8a&height=260&section=header&text=Browser%20Vigilant&fontSize=56&fontColor=00F7FF&animation=fadeIn&fontAlignY=35"/>
 </p>
@@ -184,7 +180,8 @@ Visible in UI for tamper detection.
 
 # 📊 Performance
     
-```bash
+<div align="center">
+  
 |      Metric      |   Value   |
 |------------------|-----------|
 |Detection latency | <5ms      |
@@ -192,14 +189,15 @@ Visible in UI for tamper detection.
 |Model size        | ~2.4MB    |
 |Offline support   | Yes       |
 |Telemetry         | None      |
-|------------------|-----------|
-```
+
+</div>
 
 ---
 
 # 🏗 Tech Stack
 
-```bash
+<div align="center">
+  
 |     Layer         |        Tech          |
 |-------------------|----------------------|
 |Extension          | Manifest V3          |
@@ -209,9 +207,8 @@ Visible in UI for tamper detection.
 |Storage            | chrome.storage.local |
 |Crypto             | Web Crypto API       |
 |Sync               | Hash-only API        |
-|-------------------|----------------------|
 
-```
+</div>
 
 ---
 
@@ -353,7 +350,7 @@ Reload extension after build.
 
 # 🤝 Contributing
 
-PRs welcome.
+## PRs welcome.
 
 ## Focus areas:
 
@@ -374,13 +371,11 @@ PRs welcome.
 Built for privacy-first AI security.
   </div>
 
-
 ---
 <h1 align="center">
  ⭐ Star This Repo
 </h1>
 <div align="center">
-
 If this README made you rethink what a browser extension can be.
 </div>
 
