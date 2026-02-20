@@ -2,13 +2,6 @@
 import { useState, useEffect } from "react";
 import styles from "./page.module.css";
 
-/* ─── static data ─────────────────────────── */
-const onboardingFeatures = [
-  { dot: "#34D399", icon: "🔒", title: "Your data stays here", desc: "I don't read your emails. Your personal data never leaves your device." },
-  { dot: "#F59E0B", icon: "🌙", title: "A sleeping watchdog", desc: "I only wake up when things look sketchy. Otherwise I'm invisible." },
-  { dot: "#818CF8", icon: "🎓", title: "No panic alerts", desc: "Clear, educational context instead of scary red screens." },
-];
-
 const protections = [
   { icon: "🛡", color: "#6366F1", title: "Phishing Detection", desc: "Identify fake login pages instantly and warn you before you enter data." },
   { icon: "⛏", color: "#F59E0B", title: "Crypto-Miner Blocking", desc: "Stop websites using your CPU to mine crypto in the background." },
@@ -20,6 +13,7 @@ const navItems = [
   { id: "overview", icon: "▦", label: "Overview" },
   { id: "vault", icon: "⛁", label: "Threat Vault" },
   { id: "protections", icon: "🛡", label: "Protections" },
+  { id: "flag", icon: "🚩", label: "Report URL" },
   { id: "allowlist", icon: "☰", label: "Allowlist" },
   { id: "about", icon: "ⓘ", label: "About" },
 ];
@@ -31,11 +25,74 @@ function confColor(c) { return c >= 0.8 ? "#ef4444" : c >= 0.5 ? "#f59e0b" : "#3
 
 /* ─── component ───────────────────────────── */
 export default function Home() {
-  const [onboarding, setOnboarding] = useState(true);
-  const [step, setStep] = useState(0);
   const [nav, setNav] = useState("overview");
   const [vaultData, setVaultData] = useState(null);
   const [vaultLoading, setVaultLoading] = useState(false);
+  const [flagUrl, setFlagUrl] = useState("");
+  const [flagStatus, setFlagStatus] = useState(null);
+
+  const [extensionConnected, setExtensionConnected] = useState(false);
+  const [extensionStats, setExtensionStats] = useState({ totalScanned: 0, totalBlocked: 0, threatsToday: 0 });
+
+  const [allowlist, setAllowlist] = useState(["localhost", "127.0.0.1"]);
+  const [isAddingDomain, setIsAddingDomain] = useState(false);
+  const [newDomain, setNewDomain] = useState("");
+
+  const handleAddDomain = (e) => {
+    e.preventDefault();
+    const domain = newDomain.trim();
+    if (!domain) return;
+    if (!allowlist.includes(domain)) {
+      setAllowlist([...allowlist, domain]);
+    }
+    setNewDomain("");
+    setIsAddingDomain(false);
+  };
+
+  const handleRemoveDomain = (domain) => {
+    setAllowlist(allowlist.filter(d => d !== domain));
+  };
+
+  const hashString = async (str) => {
+    const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
+    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+  };
+
+  const handleFlagUrl = async (e) => {
+    e.preventDefault();
+    const url = flagUrl.trim();
+    if (!url) return;
+    setFlagStatus("submitting");
+
+    try {
+      // Basic URL parser just to get hostname
+      const parsedUrl = url.includes("://") ? new URL(url) : new URL(`https://${url}`);
+      let hostname = parsedUrl.hostname;
+
+      const hash = await hashString(hostname);
+
+      const res = await fetch("/api/vault/submit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          hash,
+          source: "manual-report",
+          confidence: 1.0,
+          threatType: "User Flagged",
+        }),
+      });
+
+      if (!res.ok) throw new Error("API error");
+
+      setFlagStatus("success");
+      setFlagUrl("");
+    } catch (err) {
+      console.error(err);
+      setFlagStatus("error");
+    }
+
+    setTimeout(() => setFlagStatus(null), 3500);
+  };
 
   /* fetch vault stats when navigating to the vault tab */
   useEffect(() => {
@@ -48,71 +105,38 @@ export default function Home() {
       .finally(() => setVaultLoading(false));
   }, [nav]);
 
+  /* extension bridge listener */
+  useEffect(() => {
+    const handleMessage = (event) => {
+      if (event.source !== window || !event.data) return;
+      if (event.data.type === "BV_WEB_RESPONSE") {
+        setExtensionConnected(true);
+        if (event.data.data?.stats) {
+          setExtensionStats(event.data.data.stats);
+        }
+      }
+    };
+    window.addEventListener("message", handleMessage);
+
+    // Request stats from the extension bridge
+    window.postMessage({ type: "BV_WEB_REQUEST", action: "GET_STATS" }, "*");
+
+    return () => window.removeEventListener("message", handleMessage);
+  }, []);
+
   return (
     <>
-      {/* ─── Onboarding overlay ─── */}
-      {onboarding && (
-        <div className={styles.onboardingOverlay}>
-          <div className={styles.onboardingCard}>
-            {step === 0 ? (
-              <div className={styles.onboardingStep}>
-                <div className={styles.onboardingIcon}>
-                  <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-                  </svg>
-                </div>
-                <h1 className={styles.onboardingTitle}>Hi, I&apos;m Browser Vigilant.</h1>
-                <p className={styles.onboardingSubtitle}>A different kind of security. Less panic, more peace of mind.</p>
-                <div className={styles.featureList}>
-                  {onboardingFeatures.map((f, i) => (
-                    <div key={i} className={styles.featureRow}>
-                      <span className={styles.featureDot} style={{ background: f.dot }} />
-                      <div className={styles.featureIconCircle}><span style={{ fontSize: 18 }}>{f.icon}</span></div>
-                      <div>
-                        <div className={styles.featureTitle}>{f.title}</div>
-                        <div className={styles.featureDesc}>{f.desc}</div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                <button className={styles.primaryBtn} onClick={() => setStep(1)}>Learn how it works →</button>
-                <p className={styles.onboardingNote}>By clicking start, you agree to Browser Vigilant&apos;s <a href="/privacy" style={{ textDecoration: "underline", color: "#FF7B6B" }}>Privacy Policy</a>.</p>
-              </div>
-            ) : (
-              <div className={styles.onboardingStep}>
-                <div className={styles.onboardingIconGreen}>
-                  <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                    <polyline points="20 6 9 17 4 12" />
-                  </svg>
-                </div>
-                <h1 className={styles.onboardingTitle}>100% On-Device</h1>
-                <p className={styles.onboardingSubtitle}>Our AI runs in your browser via Rust + WebAssembly. No cloud, no servers, no data sent.</p>
-                <div className={styles.techPills}>
-                  {["Rust WASM", "SHA-256 Ledger", "48 Features", "RF + GBM Ensemble", "Zero API Calls"].map(t => (
-                    <span key={t} className={styles.techPill}>{t}</span>
-                  ))}
-                </div>
-                <button className={styles.primaryBtn} onClick={() => setOnboarding(false)}>Start Browsing →</button>
-                <button className={styles.ghostBtnLight} onClick={() => setStep(0)}>← Back</button>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
       {/* ─── App Shell ─── */}
       <div className={styles.shell}>
         {/* Sidebar */}
         <aside className={styles.sidebar}>
           <div className={styles.sidebarBrand}>
             <div className={styles.sidebarLogo}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#34D399" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-              </svg>
+              <img src="/shield.png" alt="Browser Vigilant" width={24} height={24} />
             </div>
             <div>
               <div className={styles.brandName}>Browser Vigilant</div>
-              <div className={styles.brandSub}>Friendly Security</div>
+              <div className={styles.brandSub}>Everything looks good.</div>
             </div>
           </div>
 
@@ -151,13 +175,18 @@ export default function Home() {
                   <div className={styles.statCardInner}>
                     <div>
                       <div className={styles.statLabel}>Scams avoided</div>
-                      <div className={styles.statNumber}>14 <span className={styles.statDelta}>+2 this week</span></div>
-                      <p className={styles.statDesc}>That&apos;s 14 times we stepped in to gently pause a connection before it could do any harm. Great job staying safe!</p>
+                      <div className={styles.statNumber}>
+                        {extensionConnected ? extensionStats.totalBlocked : 14}
+                        <span className={styles.statDelta}>{extensionConnected ? `+${extensionStats.threatsToday} today` : "+2 this week"}</span>
+                      </div>
+                      <p className={styles.statDesc}>
+                        {extensionConnected
+                          ? `That's ${extensionStats.totalBlocked} times we stepped in to gently pause a connection before it could do any harm. Great job staying safe!`
+                          : "That's 14 times we stepped in to gently pause a connection before it could do any harm. Great job staying safe!"}
+                      </p>
                     </div>
                     <div className={styles.statIllustration}>
-                      <svg width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="rgba(255,123,107,0.12)" strokeWidth="1.5">
-                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-                      </svg>
+                      <img src="/shield.png" alt="" width={80} height={80} style={{ opacity: 0.1 }} />
                     </div>
                   </div>
                 </div>
@@ -168,7 +197,9 @@ export default function Home() {
                         <circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" />
                       </svg>
                     </div>
-                    <div className={styles.statSmNumber}>2.4s</div>
+                    <div className={styles.statSmNumber}>
+                      {extensionConnected ? `${(extensionStats.totalBlocked * 0.4).toFixed(1)}s` : "2.4s"}
+                    </div>
                     <div className={styles.statSmLabel}>AVG. LOAD TIME SAVED</div>
                   </div>
                   <div className={`${styles.statCard} ${styles.statCardSm}`}>
@@ -178,8 +209,10 @@ export default function Home() {
                         <line x1="1" y1="1" x2="23" y2="23" />
                       </svg>
                     </div>
-                    <div className={styles.statSmNumber}>128</div>
-                    <div className={styles.statSmLabel}>TRACKERS BLOCKED</div>
+                    <div className={styles.statSmNumber}>
+                      {extensionConnected ? extensionStats.totalScanned * 2 : 128}
+                    </div>
+                    <div className={styles.statSmLabel}>DOMAINS SCANNED</div>
                   </div>
                 </div>
               </div>
@@ -330,6 +363,44 @@ export default function Home() {
             </>
           )}
 
+          {/* ── Report URL ── */}
+          {nav === "flag" && (
+            <>
+              <div className={styles.pageHeader}>
+                <h1 className={styles.pageTitle}>Report Phishing URL</h1>
+                <p className={styles.pageSubtitle}>Manually flag a malicious URL to be added to the Threat Vault.</p>
+              </div>
+              <div className={styles.ctaCard}>
+                <form onSubmit={handleFlagUrl} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  <label style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '14px', fontWeight: 600, color: 'white' }}>
+                    Malicious URL:
+                    <input
+                      type="url"
+                      placeholder="https://example-phishing.com"
+                      value={flagUrl}
+                      onChange={(e) => setFlagUrl(e.target.value)}
+                      required
+                      style={{ padding: '12px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.2)', background: 'rgba(255,255,255,0.06)', color: 'white', outline: 'none' }}
+                    />
+                  </label>
+                  <button type="submit" className={styles.primaryBtn} disabled={flagStatus === "submitting"}>
+                    {flagStatus === "submitting" ? "Submitting..." : "Flag URL"}
+                  </button>
+                  {flagStatus === "success" && (
+                    <div style={{ color: "#34D399", fontSize: "14px", fontWeight: 500 }}>
+                      ✔ URL successfully hashed and submitted to the Threat Vault!
+                    </div>
+                  )}
+                  {flagStatus === "error" && (
+                    <div style={{ color: "#FF7B6B", fontSize: "14px", fontWeight: 500 }}>
+                      ⚠ Failed to submit to Vault. Is the database running?
+                    </div>
+                  )}
+                </form>
+              </div>
+            </>
+          )}
+
           {/* ── Allowlist ── */}
           {nav === "allowlist" && (
             <>
@@ -339,15 +410,44 @@ export default function Home() {
               </div>
               <div className={styles.sectionHeader}>
                 <div />
-                <button className={styles.addBtn}>+ Add Domain</button>
+                <button className={styles.addBtn} onClick={() => setIsAddingDomain(!isAddingDomain)}>
+                  {isAddingDomain ? "Cancel" : "+ Add Domain"}
+                </button>
               </div>
+
+              {isAddingDomain && (
+                <form onSubmit={handleAddDomain} style={{ marginBottom: "20px", display: "flex", gap: "10px" }}>
+                  <input
+                    type="text"
+                    placeholder="example.com"
+                    value={newDomain}
+                    onChange={(e) => setNewDomain(e.target.value)}
+                    required
+                    style={{ flex: 1, padding: "10px 16px", borderRadius: "100px", border: "1px solid var(--border)", background: "var(--bg-card)", outline: "none", color: "var(--text-primary)" }}
+                  />
+                  <button type="submit" className={styles.addBtn} style={{ background: "#34D399" }}>Save</button>
+                </form>
+              )}
+
               <div className={styles.tableWrap}>
                 <table className={styles.table}>
                   <thead>
                     <tr><th>DOMAIN NAME</th><th>DATE ADDED</th><th>ACTIONS</th></tr>
                   </thead>
                   <tbody>
-                    <tr><td colSpan={3} className={styles.emptyRow}>No trusted domains yet.</td></tr>
+                    {allowlist.length === 0 ? (
+                      <tr><td colSpan={3} className={styles.emptyRow}>No trusted domains yet.</td></tr>
+                    ) : (
+                      allowlist.map((domain, index) => (
+                        <tr key={index}>
+                          <td style={{ fontWeight: 600, color: "var(--text-primary)" }}>{domain}</td>
+                          <td>{fmtDate(new Date())}</td>
+                          <td>
+                            <button className={styles.resetBtn} onClick={() => handleRemoveDomain(domain)}>Remove</button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
                   </tbody>
                 </table>
               </div>

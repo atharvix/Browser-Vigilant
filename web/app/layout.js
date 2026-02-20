@@ -8,7 +8,7 @@ const inter = Inter({
 });
 
 export const metadata = {
-  title: "Browser Vigilant — Friendly Security",
+  title: "Browser Vigilant — Everything looks good.",
   description: "On-device AI security that protects you without spying on you. Block phishing, scams, and malware with zero data collection.",
 };
 
