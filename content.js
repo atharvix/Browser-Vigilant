@@ -339,12 +339,12 @@
                 // Fallback: if only basic wasm exists, map simd → basic
             };
 
-            const modelUrl = chrome.runtime.getURL("model/model.onnx");
+            const modelUrl = chrome.runtime.getURL("model.onnx");
             const session = await ort.InferenceSession.create(modelUrl, {
                 executionProviders: ["wasm"],
                 graphOptimizationLevel: "basic",
             });
-            const tensor = new ort.Tensor("float32", Float32Array.from(features), [1, 48]);
+            const tensor = new ort.Tensor("float32", Float32Array.from(features), [1, 56]);
             const results = await session.run({ input: tensor });
 
             // Extract phishing probability from model outputs

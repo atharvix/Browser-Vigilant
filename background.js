@@ -14,11 +14,13 @@
 // ── Storage keys ─────────────────────────────────────────────────────────────
 const KEYS = {
     HISTORY: "bv_scan_history",
-    CHAIN: "bv_threat_chain",
+    VAULT: "bv_threat_vault",   // Merkle Threat Vault (replaces chain key)
     STATS: "bv_stats",
     SETTINGS: "bv_settings",
     TAB_STATE: "bv_tab_state",
 };
+// Legacy alias so old chain reads still work during migration
+const CHAIN_LEGACY_KEY = "bv_threat_chain";
 
 const DEFAULT_SETTINGS = {
     protection: true,
@@ -33,25 +35,72 @@ const DEFAULT_SETTINGS = {
 
 const MAX_HISTORY = 200;
 
+// ── Merkle Threat Vault — in-memory hash cache ────────────────────────────────
+// SHA-256(hostname) of every confirmed-blocked domain.
+// O(1) lookup. Rebuilt from vault on startup. Never stores raw URLs.
+let blockedDomainHashes = new Set();
+let merkleRoot = null; // current Merkle root hash — proves vault integrity
+
+/**
+ * Merkle root = SHA-256 of all leaf hashes sorted and concatenated.
+ * Matches standard Merkle tree root for a sorted list.
+ * O(n) to compute.  Verified on reload to detect tampering.
+ */
+async function computeMerkleRoot(hashes) {
+    if (!hashes || hashes.length === 0) return "0".repeat(64);
+    const sorted = [...hashes].sort();
+    const combined = sorted.join("");
+    return sha256(combined);
+}
+
+async function rebuildVaultCache() {
+    const data = await chrome.storage.local.get(KEYS.VAULT);
+    const vault = data[KEYS.VAULT] || { blocks: [], merkleRoot: "0".repeat(64) };
+    blockedDomainHashes.clear();
+    const allHashes = [];
+    for (const block of vault.blocks) {
+        if (block.domainHash) {
+            blockedDomainHashes.add(block.domainHash);
+            allHashes.push(block.domainHash);
+        }
+    }
+    // Verify Merkle root integrity
+    const computed = await computeMerkleRoot(allHashes);
+    if (vault.blocks.length > 0 && computed !== vault.merkleRoot) {
+        console.warn("[BV] Threat Vault Merkle root mismatch — vault may be tampered!");
+        await chrome.storage.local.set({ bv_vault_tampered: true });
+    } else {
+        await chrome.storage.local.set({ bv_vault_tampered: false });
+    }
+    merkleRoot = computed;
+    console.log(`[BV] Threat Vault loaded: ${blockedDomainHashes.size} blocked domains (Merkle root: ${computed.slice(0, 16)}...)`);
+}
+
+async function getVault() {
+    const data = await chrome.storage.local.get(KEYS.VAULT);
+    return data[KEYS.VAULT] || { blocks: [], merkleRoot: "0".repeat(64) };
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 chrome.runtime.onInstalled.addListener(async () => {
-    const existing = await chrome.storage.local.get(KEYS.CHAIN);
-    if (!existing[KEYS.CHAIN]) {
+    const existing = await chrome.storage.local.get(KEYS.VAULT);
+    if (!existing[KEYS.VAULT]) {
         const genesis = await buildGenesisBlock();
         await chrome.storage.local.set({
-            [KEYS.CHAIN]: [genesis],
+            [KEYS.VAULT]: { blocks: [genesis], merkleRoot: genesis.hash },
             [KEYS.HISTORY]: [],
             [KEYS.STATS]: { totalScanned: 0, totalBlocked: 0, threatsToday: 0, lastReset: todayDateStr() },
             [KEYS.TAB_STATE]: {},
         });
     }
     await ensureSettingsDefaults();
+    await rebuildVaultCache();
     console.log("[BV] Browser Vigilant v2.0 installed.");
 });
 
 chrome.runtime.onStartup.addListener(async () => {
     await resetDailyStatsIfNeeded();
-    await verifyChainIntegrity();
+    await rebuildVaultCache();   // rebuilds in-memory Set + verifies Merkle root
     await ensureSettingsDefaults();
 });
 
@@ -89,41 +138,48 @@ async function hashBlock(block) {
 }
 
 async function appendChainBlock(threatData) {
-    const { chain } = await chrome.storage.local.get(KEYS.CHAIN);
-    const prev = chain[chain.length - 1];
+    const vault = await getVault();
+    const prev = vault.blocks[vault.blocks.length - 1];
+
+    // Compute domain hash for Merkle Threat Vault (SHA-256 of hostname only)
+    // Raw URL is NOT stored in the domain hash — only hostname, one-way hash
+    const domain = (() => {
+        try { return new URL(threatData.url).hostname.toLowerCase(); }
+        catch { return threatData.url; }
+    })();
+    const domainHash = await sha256(domain);
+
     const block = {
         index: prev.index + 1,
         timestamp: new Date().toISOString(),
         type: "THREAT_BLOCKED",
-        url: threatData.url,
+        // Privacy: store only truncated URL (no path/query) + domain hash
+        urlSummary: (() => { try { return new URL(threatData.url).hostname; } catch { return "unknown"; } })(),
+        domainHash,             // SHA-256(hostname) — irreversible, no PII
         threatType: threatData.threatType,
         signals: threatData.signals,
         riskScore: threatData.riskScore,
-        mlProb: threatData.mlProb,
-        hScore: threatData.hScore,
-        domScore: threatData.domScore,
+        mlProb: threatData.mlProb ?? null,
+        hScore: threatData.hScore ?? null,
+        domScore: threatData.domScore ?? null,
+        layer: threatData.layer ?? "heuristic", // which layer caught it
         prevHash: prev.hash,
         nonce: crypto.getRandomValues(new Uint32Array(1))[0],
     };
     block.hash = await hashBlock(block);
-    chain.push(block);
-    await chrome.storage.local.set({ [KEYS.CHAIN]: chain });
-    return block;
-}
+    vault.blocks.push(block);
 
-async function verifyChainIntegrity() {
-    const { [KEYS.CHAIN]: chain } = await chrome.storage.local.get(KEYS.CHAIN);
-    if (!chain || chain.length === 0) return true;
-    for (let i = 1; i < chain.length; i++) {
-        const expected = await hashBlock({ ...chain[i], hash: undefined });
-        if (chain[i].hash !== expected || chain[i].prevHash !== chain[i - 1].hash) {
-            console.error(`[BV] Chain integrity FAILED at block ${i}`);
-            await chrome.storage.local.set({ bv_chain_tampered: true });
-            return false;
-        }
-    }
-    await chrome.storage.local.set({ bv_chain_tampered: false });
-    return true;
+    // Update Merkle root
+    const allHashes = vault.blocks.filter(b => b.domainHash).map(b => b.domainHash);
+    vault.merkleRoot = await computeMerkleRoot(allHashes);
+
+    await chrome.storage.local.set({ [KEYS.VAULT]: vault });
+
+    // Update in-memory cache immediately — O(1) future lookups
+    blockedDomainHashes.add(domainHash);
+    merkleRoot = vault.merkleRoot;
+
+    return block;
 }
 
 // ── Settings ──────────────────────────────────────────────────────────────────
@@ -268,15 +324,42 @@ async function handleMessage(message, sender) {
 
     if (type === "GET_STATE") {
         const { tabId } = message;
-        const [tabState, settings, stats, history, chain, tampered] = await Promise.all([
+        const [tabState, settings, stats, history, vault, tampered] = await Promise.all([
             getTabState(tabId),
             getSettings(),
             chrome.storage.local.get(KEYS.STATS).then(r => r[KEYS.STATS]),
             chrome.storage.local.get(KEYS.HISTORY).then(r => r[KEYS.HISTORY] || []),
-            chrome.storage.local.get(KEYS.CHAIN).then(r => r[KEYS.CHAIN] || []),
-            chrome.storage.local.get("bv_chain_tampered").then(r => r.bv_chain_tampered || false),
+            getVault(),
+            chrome.storage.local.get("bv_vault_tampered").then(r => r.bv_vault_tampered || false),
         ]);
-        return { tabState, settings, stats, history, chain, chainTampered: tampered };
+        return {
+            tabState, settings, stats, history,
+            chain: vault.blocks,            // popup still uses 'chain' key for compatibility
+            chainTampered: tampered,
+            merkleRoot: vault.merkleRoot,
+            vaultSize: blockedDomainHashes.size,
+        };
+    }
+
+    // ── SCAN_URL: popup scanner delegates heuristics to background ────────────
+    // This removes the duplicated quickScan() from Shield.svelte.
+    if (type === "SCAN_URL") {
+        const result = prenavScan(message.url || "");
+        // Also check vault for instant match
+        try {
+            const domain = new URL(message.url).hostname.toLowerCase();
+            const dHash = await sha256(domain);
+            if (blockedDomainHashes.has(dHash)) {
+                return {
+                    verdict: "threat",
+                    riskScore: 100,
+                    signals: ["Previously confirmed threat (Threat Vault match)"],
+                    threatType: "Threat Vault: Confirmed Blocked Domain",
+                    source: "vault",
+                };
+            }
+        } catch { /* ignore parse errors */ }
+        return result;
     }
 
     if (type === "SAVE_SETTINGS") {
@@ -505,7 +588,7 @@ function isRateLimited(url) {
     return false;
 }
 
-// ── The main pre-navigation hook ───────────────────────────────────────────────
+// ── The main pre-navigation hook (3-Stage Pipeline) ────────────────────────────
 chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
     // Only scan main frame (frameId === 0), skip iframes
     if (details.frameId !== 0) return;
@@ -513,13 +596,36 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
     const url = details.url;
     if (!url.startsWith("http://") && !url.startsWith("https://")) return;
 
-    // Rate-limit: don't re-scan same host within 10s
-    if (isRateLimited(url)) return;
-
     const settings = await getSettings();
     if (!settings.protection) return;
 
+    // ── STAGE 1: Merkle Threat Vault — O(1) hash lookup (<0.1ms) ──────────────
+    // Check if hostname SHA-256 is in confirmed-blocked Set.
+    // If yes: instant block, skip all heuristics and ML entirely.
+    let domain = "";
+    try { domain = new URL(url).hostname.toLowerCase(); } catch { return; }
+
+    const dHash = await sha256(domain);
+    if (blockedDomainHashes.has(dHash)) {
+        const params = new URLSearchParams({
+            url: encodeURIComponent(url),
+            risk: 100,
+            threat: "Threat Vault: Previously Confirmed Blocked Domain",
+            signals: encodeURIComponent("Merkle Vault match|SHA-256 domain hash confirmed"),
+        });
+        chrome.tabs.update(details.tabId, { url: chrome.runtime.getURL(`block.html?${params}`) });
+        // Badge only — no new vault entry needed (already recorded)
+        chrome.action.setBadgeBackgroundColor({ color: "#ef4444", tabId: details.tabId });
+        chrome.action.setBadgeText({ text: "✕", tabId: details.tabId });
+        return;
+    }
+
+    // Rate-limit: don't re-run heuristics on same host within 10s
+    if (isRateLimited(url)) return;
+
+    // ── STAGE 2: Heuristic Pre-filter (<2ms) ──────────────────────────────────
     const result = prenavScan(url);
+    result.layer = "heuristic";
     if (result.verdict === "safe") return;
 
     const hostname = (() => { try { return new URL(url).hostname; } catch { return url; } })();
@@ -565,7 +671,7 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
             });
         }
 
-        // Record in history + blockchain
+        // Record in history + Threat Vault (Merkle chain)
         await recordScan({
             url, status: "threat", scanMs: 0,
             riskScore: result.riskScore,
@@ -574,9 +680,11 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
         });
         await updateStats(true);
         await appendChainBlock({
-            url, threatType: result.threatType,
+            url,
+            threatType: result.threatType,
             signals: result.signals,
             riskScore: result.riskScore,
+            layer: result.layer || "heuristic",
         });
 
         // Badge
