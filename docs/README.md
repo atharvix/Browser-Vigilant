@@ -384,4 +384,4 @@ Built for privacy-first AI security.
 If this README made you rethink what a browser extension can be.
 </div>
 
-<p align="center"> <img src="https://capsule-render.vercel.app/api?type=waving&color=0:1e3a8a,100:0f172a&height=160&section=footer"/> </p> ```
+<p align="center"> <img src="https://capsule-render.vercel.app/api?type=waving&color=0:1e3a8a,100:0f172a&height=160&section=footer"/> </p> 
