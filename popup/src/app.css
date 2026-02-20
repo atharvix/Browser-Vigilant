@@ -1,42 +1,56 @@
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap');
 
 :root {
-  --bg-primary: #06090f;
-  --bg-secondary: #0b1020;
-  --bg-card: #101828;
-  --bg-card-hover: #162035;
-  --border: rgba(99, 179, 237, 0.10);
-  --border-glow: rgba(99, 179, 237, 0.28);
-  --accent: #3b82f6;
-  --accent-glow: rgba(59, 130, 246, 0.35);
-  --accent-green: #10b981;
-  --accent-red: #ef4444;
-  --accent-amber: #f59e0b;
-  --text-primary: #eef2ff;
-  --text-secondary: #8b9ab3;
-  --text-muted: #3d4f65;
+  /* Warm off-white — matches mockup exactly */
+  --bg-primary: #F8F8F6;
+  --bg-secondary: #EEEDE9;
+  --bg-card: #FFFFFF;
+  --bg-card-hover: #FAFAF8;
+  --border: rgba(0, 0, 0, 0.06);
+  --border-glow: rgba(0, 0, 0, 0.10);
+
+  /* Soft Colors from Mockup */
+  --accent: #1A202C;
+  --accent-glow: rgba(26, 32, 44, 0.1);
+  --accent-green: #34D399;
+  --accent-green-light: #D1FAE5;
+  --accent-red: #FF7B72;
+  --accent-red-light: #FEE2E2;
+  --accent-amber: #FBBF24;
+  --accent-amber-light: #FEF3C7;
+
+  --text-primary: #1A202C;
+  --text-secondary: #4A5568;
+  --text-muted: #A0AEC0;
+
   --font-main: 'Outfit', sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   --radius-sm: 8px;
-  --radius-md: 12px;
-  --radius-lg: 16px;
+  --radius-md: 16px;
+  --radius-lg: 24px;
+  --radius-xl: 32px;
 }
 
-:root.light-theme {
-  --bg-primary: #f8fafc;
-  --bg-secondary: #f1f5f9;
-  --bg-card: #ffffff;
-  --bg-card-hover: #e2e8f0;
-  --border: rgba(59, 130, 246, 0.20);
-  --border-glow: rgba(59, 130, 246, 0.40);
-  --accent: #2563eb;
-  --accent-glow: rgba(37, 99, 235, 0.35);
-  --accent-green: #059669;
-  --accent-red: #dc2626;
-  --accent-amber: #d97706;
-  --text-primary: #0f172a;
-  --text-secondary: #475569;
-  --text-muted: #64748b;
+:root.dark-theme {
+  --bg-primary: #121212;
+  --bg-secondary: #1E1E1E;
+  --bg-card: #1C1C1E;
+  --bg-card-hover: #262629;
+  --border: rgba(255, 255, 255, 0.08);
+  --border-glow: rgba(255, 255, 255, 0.12);
+
+  --accent: #F7FAFC;
+  --accent-glow: rgba(255, 255, 255, 0.1);
+  --accent-green: #2EBA86;
+  --accent-green-light: rgba(46, 186, 134, 0.2);
+  --accent-red: #FF6B60;
+  --accent-red-light: rgba(255, 107, 96, 0.2);
+  --accent-amber: #EAB308;
+  --accent-amber-light: rgba(234, 179, 8, 0.2);
+
+  --text-primary: #F7FAFC;
+  --text-secondary: #A0AEC0;
+  --text-muted: #718096;
 }
 
 *,
@@ -125,5 +139,13 @@ body {
 .card {
   background: var(--bg-card);
   border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.03);
+  transition: all 0.2s ease;
+}
+
+.card:hover {
+  background: var(--bg-card-hover);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.05);
+  transform: translateY(-1px);
 }

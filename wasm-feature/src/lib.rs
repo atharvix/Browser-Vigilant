@@ -385,6 +385,11 @@ fn find_upi_vpa(text: &str) -> Vec<(String, String)> {
                 e
             };
             if prefix_start < i && handle_end > i + 1 {
+                // Ensure it's not a standard email address. Standard emails typically have a dot right after the handle (e.g., .com)
+                if handle_end < bytes.len() && bytes[handle_end] == b'.' {
+                    i = handle_end;
+                    continue;
+                }
                 let prefix = text[prefix_start..i].to_lowercase();
                 let handle = text[i+1..handle_end].to_lowercase();
                 if !prefix.is_empty() && handle.len() >= 2 {

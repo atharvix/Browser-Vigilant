@@ -30,7 +30,13 @@ document.addEventListener("DOMContentLoaded", () => {
     // Proceed anyway — warn and proceed
     document.getElementById("btnProceed").addEventListener("click", () => {
         if (confirm("⚠ WARNING: This page has been identified as dangerous.\n\nProceeding may expose you to phishing, malware, or fraud.\n\nAre you sure you want to continue?")) {
-            window.location.href = blockedUrl;
+            try {
+                const proceedUrl = new URL(blockedUrl);
+                proceedUrl.searchParams.set("bv_allow", "1");
+                window.location.href = proceedUrl.toString();
+            } catch {
+                window.location.href = blockedUrl;
+            }
         }
     });
 });

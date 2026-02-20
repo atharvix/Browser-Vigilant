@@ -57,6 +57,22 @@
       history = res.history ?? [];
       chain = res.chain ?? [];
       chainTampered = res.chainTampered ?? false;
+
+      // If tabState is null but URL is a real web page, retry once after a
+      // short delay — content.js may still be running its scan
+      const isScannableUrl =
+        currentTabUrl.startsWith("http://") ||
+        currentTabUrl.startsWith("https://");
+      if (!tabState && isScannableUrl) {
+        await new Promise((r) => setTimeout(r, 1500));
+        const res2 = await chrome.runtime.sendMessage({
+          type: "GET_STATE",
+          tabId: currentTabId,
+        });
+        if (res2.tabState) tabState = res2.tabState;
+        // Refresh stats too
+        if (res2.stats) stats = res2.stats;
+      }
     } catch (e) {
       console.warn("[BV Popup] Could not load state:", e);
     } finally {
@@ -100,60 +116,54 @@
   <!-- Header -->
   <header class="header">
     <div class="logo">
-      <div class="logo-icon">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-          <path
-            d="M12 2L3 7v5c0 5.25 3.75 10.15 9 11.25C17.25 22.15 21 17.25 21 12V7L12 2z"
-            fill="url(#sg)"
-            stroke="rgba(99,179,237,0.4)"
-            stroke-width="0.5"
-          />
-          <path
-            d="M9.5 12.5l2 2 4-4"
-            stroke="#f0f4ff"
-            stroke-width="1.5"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          />
-          <defs>
-            <linearGradient
-              id="sg"
-              x1="3"
-              y1="2"
-              x2="21"
-              y2="23"
-              gradientUnits="userSpaceOnUse"
-            >
-              <stop stop-color="#3b82f6" />
-              <stop offset="1" stop-color="#1d4ed8" />
-            </linearGradient>
-          </defs>
-        </svg>
-      </div>
+      <svg
+        width="20"
+        height="20"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke={settings?.protection === false
+          ? "var(--text-muted)"
+          : "#34d399"}
+        stroke-width="2.5"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        class="logo-shield"
+      >
+        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+      </svg>
       <div class="logo-text">
         <span class="logo-name">Browser Vigilant</span>
-        <span class="logo-sub">v2.0 · AI+Blockchain Engine</span>
+        <span
+          class="logo-status {settings?.protection === false
+            ? 'paused'
+            : 'active'}"
+        >
+          {settings?.protection === false ? "Paused" : "Active"}
+        </span>
       </div>
     </div>
 
     <div class="header-actions">
       <button
-        class="theme-toggle"
-        on:click={toggleTheme}
-        aria-label="Toggle Theme"
-        title={isLightMode ? "Switch to Dark Mode" : "Switch to Light Mode"}
+        class="icon-btn"
+        on:click={() =>
+          (activeTab = activeTab === "settings" ? "shield" : "settings")}
+        aria-label="Settings"
       >
-        {isLightMode ? "🌙" : "☀️"}
+        <svg
+          width="18"
+          height="18"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          ><circle cx="12" cy="12" r="3"></circle><path
+            d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"
+          ></path></svg
+        >
       </button>
-
-      <div
-        class="status-badge {settings?.protection === false
-          ? 'paused'
-          : 'active'}"
-      >
-        <span class="status-dot"></span>
-        {settings?.protection === false ? "Paused" : "Active"}
-      </div>
     </div>
   </header>
 
@@ -178,22 +188,21 @@
         <p class="loader-txt">Loading engine state…</p>
       </div>
     {:else if activeTab === "shield"}
-      <Shield {tabState} {stats} tabUrl={currentTabUrl} />
+      <Shield {tabState} {stats} {settings} tabUrl={currentTabUrl} />
     {:else if activeTab === "history"}
-      <History {history} onClear={onClearHistory} />
+      <div class="tab-page">
+        <History {history} onClear={onClearHistory} />
+      </div>
     {:else if activeTab === "ledger"}
-      <ThreatMap {chain} {chainTampered} />
+      <div class="tab-page">
+        <ThreatMap {chain} {chainTampered} />
+      </div>
     {:else if activeTab === "settings"}
-      <Settings {settings} onChange={onSettingsChange} />
+      <div class="tab-page">
+        <Settings {settings} onChange={onSettingsChange} />
+      </div>
     {/if}
   </main>
-
-  <!-- Footer -->
-  <footer class="footer">
-    <span class="footer-txt"
-      >100% On-Device · Zero Data Leaks · Rust WASM · SHA-256 Ledger</span
-    >
-  </footer>
 </div>
 
 <style>
@@ -212,30 +221,18 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 12px 14px 10px;
-    border-bottom: 1px solid var(--border);
-    background: var(--bg-secondary);
+    padding: 24px 24px 20px;
+    background: transparent;
     flex-shrink: 0;
+    z-index: 10;
   }
   .logo {
     display: flex;
     align-items: center;
-    gap: 9px;
+    gap: 10px;
   }
-  .logo-icon {
-    width: 34px;
-    height: 34px;
-    background: linear-gradient(
-      135deg,
-      rgba(59, 130, 246, 0.18),
-      rgba(29, 78, 216, 0.08)
-    );
-    border: 1px solid rgba(59, 130, 246, 0.28);
-    border-radius: 9px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    box-shadow: 0 0 10px rgba(59, 130, 246, 0.12);
+  .logo-shield {
+    flex-shrink: 0;
   }
   .logo-text {
     display: flex;
@@ -243,118 +240,105 @@
     gap: 1px;
   }
   .logo-name {
-    font-size: 12px;
-    font-weight: 700;
+    font-size: 16px;
+    font-weight: 800;
     color: var(--text-primary);
-    letter-spacing: 0.02em;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
   }
-  .logo-sub {
-    font-size: 8px;
-    color: var(--text-muted);
-    font-family: var(--font-mono);
+  .logo-status {
+    font-size: 10px;
+    font-weight: 700;
     letter-spacing: 0.05em;
-    text-transform: uppercase;
+    line-height: 1;
   }
-
+  .logo-status.active {
+    color: #34d399;
+  }
+  .logo-status.paused {
+    color: var(--text-muted);
+  }
   .header-actions {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 16px;
   }
-  .theme-toggle {
-    background: transparent;
+  .icon-btn {
+    background: none;
     border: none;
+    color: var(--text-secondary);
     cursor: pointer;
-    font-size: 14px;
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 6px;
-    border-radius: 8px;
-    transition: background 0.2s;
+    transition: color 0.2s;
   }
-  .theme-toggle:hover {
-    background: var(--bg-card-hover);
-  }
-
-  .status-badge {
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    font-size: 9px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    padding: 4px 10px;
-    border-radius: 100px;
-  }
-  .status-badge.active {
-    border: 1px solid var(--accent-green);
-    color: var(--accent-green);
-    background: rgba(16, 185, 129, 0.08);
-  }
-  .status-badge.paused {
-    border: 1px solid var(--text-muted);
-    color: var(--text-muted);
-    background: rgba(255, 255, 255, 0.04);
-  }
-  .status-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-  }
-  .status-badge.active .status-dot {
-    background: var(--accent-green);
-  }
-  .status-badge.paused .status-dot {
-    background: var(--text-muted);
+  .icon-btn:hover {
+    color: var(--text-primary);
   }
 
   /* Tabs */
   .tabs {
     display: flex;
-    border-bottom: 1px solid var(--border);
+    background: transparent;
+    padding: 0 24px;
+    gap: 8px;
+    margin-bottom: 20px;
+  }
+  .tab-btn {
+    flex: 1;
     background: var(--bg-secondary);
-    padding: 0 6px;
+    border: 1px solid transparent;
+    border-radius: 100px;
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 700;
+    padding: 10px 0;
+    cursor: pointer;
+    font-family: var(--font-main);
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .tab-btn:hover {
+    color: var(--text-primary);
+    background: rgba(0, 0, 0, 0.04);
+  }
+  .tab-btn.active {
+    background: var(--bg-card);
     flex-shrink: 0;
   }
   .tab-btn {
     flex: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 4px;
-    padding: 8px 2px;
-    border: none;
-    background: transparent;
-    color: var(--text-muted);
-    font-family: var(--font-main);
-    font-size: 10px;
-    font-weight: 500;
+    background: var(--bg-secondary);
+    border: 1px solid transparent;
+    border-radius: 100px;
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 700;
+    padding: 10px 0;
     cursor: pointer;
-    border-bottom: 2px solid transparent;
-    position: relative;
-    bottom: -1px;
-    transition: all 0.18s ease;
-    letter-spacing: 0.02em;
+    font-family: var(--font-main);
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   }
   .tab-btn:hover {
-    color: var(--text-secondary);
+    color: var(--text-primary);
+    background: rgba(0, 0, 0, 0.04);
   }
   .tab-btn.active {
-    color: var(--accent);
-    border-bottom-color: var(--accent);
-  }
-  .tab-icon {
-    font-size: 13px;
+    background: var(--bg-card);
+    border-color: transparent;
+    color: var(--text-primary);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
   }
 
   /* Content */
   .content {
     flex: 1;
     overflow-y: auto;
-    padding: 14px;
+    padding: 0;
     background: var(--bg-primary);
+  }
+  .tab-page {
+    padding: 4px 20px 24px;
   }
 
   /* Loader */
