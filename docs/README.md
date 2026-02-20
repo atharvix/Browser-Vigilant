@@ -36,7 +36,7 @@ it’s an **on-device cybersecurity engine**.
 
 # ⚡ Detection Pipeline
 
-<h2 align="center">
+<div align="center">
     
 ```bash
 User Types URL
@@ -54,7 +54,7 @@ DOM Behavioral Scanner
 BLOCK / WARN / SAFE
 
 ```
-</h2>
+</div>
 
 Latency: **< 5ms**
 
@@ -188,7 +188,7 @@ Visible in UI for tamper detection.
 
 # 📊 Performance
 
-<h2 align="center">
+<div align="center">
     
 ```bash
 |      Metric      |   Value   |
@@ -201,12 +201,14 @@ Visible in UI for tamper detection.
 |------------------|-----------|
 ```
 
-</h2>
+</div>
 
 ---
 
 # 🏗 Tech Stack
 
+<div align="center">
+  
 ```bash
 |     Layer         |        Tech          |
 |-------------------|----------------------|
@@ -220,6 +222,8 @@ Visible in UI for tamper detection.
 |-------------------|----------------------|
 
 ```
+
+</div>
 
 ---
 
@@ -311,11 +315,15 @@ Reload extension after build.
 
 # 🧪 Benchmarks
 
-|       Test	 |   Result   |
+<div align="center">
+
+|       Test	   |   Result   |
 |----------------|------------|
-|Accuracy	     |     98%    |
+|Accuracy	       |     98%    |
 |False positives |	   <1%    | 
 |Detection time	 |    ~3ms    |
+
+</div>
 
 ---
 
@@ -356,11 +364,12 @@ PRs welcome.
 Built for privacy-first AI security.
 
 ---
-
-# ⭐ Star This Repo
-
+<h1 align="center">
+ ⭐ Star This Repo
+</h1>
+<div align="center">
 
 If this README made you rethink what a browser extension can be.
-</h2>
+</div>
 
 <p align="center"> <img src="https://capsule-render.vercel.app/api?type=waving&color=0:1e3a8a,100:0f172a&height=160&section=footer"/> </p> ```
