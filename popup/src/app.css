@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap');
 
 :root {
   --bg-primary: #06090f;
@@ -15,8 +15,8 @@
   --text-primary: #eef2ff;
   --text-secondary: #8b9ab3;
   --text-muted: #3d4f65;
-  --font-main: 'Inter', sans-serif;
-  --font-mono: 'JetBrains Mono', monospace;
+  --font-main: 'Outfit', sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 16px;
